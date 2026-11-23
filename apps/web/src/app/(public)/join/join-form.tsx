@@ -1,6 +1,7 @@
 "use client";
 
 import { useActionState } from "react";
+import { HONEYPOT_FIELD } from "@/server/honeypot";
 import { joinAction, type JoinState } from "./actions";
 
 const INITIAL: JoinState = { status: "IDLE", message: null, fields: [] };
@@ -77,8 +78,18 @@ export function JoinForm() {
 
       {/* Hidden from people. Bots that fill it are ignored. */}
       <div className="hp" aria-hidden="true">
-        <label htmlFor="company_fax">Company fax</label>
-        <input id="company_fax" name="company_fax" tabIndex={-1} autoComplete="off" />
+        <label htmlFor={HONEYPOT_FIELD}>Leave this field empty</label>
+        <input
+          id={HONEYPOT_FIELD}
+          name={HONEYPOT_FIELD}
+          type="text"
+          tabIndex={-1}
+          autoComplete="off"
+          data-1p-ignore=""
+          data-lpignore="true"
+          data-form-type="other"
+          defaultValue=""
+        />
       </div>
 
       {state.status === "ERROR" && state.message && (

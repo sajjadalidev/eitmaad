@@ -46,6 +46,10 @@ describe("submitApplication", () => {
     if (r.status === "INVALID_INPUT") expect(r.fields.sort()).toEqual(["category", "contact_email", "store_url"]);
   });
 
+  it("uses a hidden field name that browsers will not autofill", () => {
+    expect(HONEYPOT_FIELD).not.toMatch(/fax|phone|tel|company|url|email|name|address/i);
+  });
+
   it("pretends success for bots that fill the hidden field, but saves nothing", async () => {
     const c = ctx();
     expect(await submitApplication(c, valid({ [HONEYPOT_FIELD]: "123" }), null)).toEqual({ status: "RECEIVED" });

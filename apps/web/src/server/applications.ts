@@ -11,7 +11,9 @@ export const MAX_PER_EMAIL_PER_DAY = 3;
 export const MAX_PER_IP_PER_HOUR = 5;
 
 // Hidden field. People never see it; simple bots fill it in.
-export const HONEYPOT_FIELD = "company_fax";
+import { HONEYPOT_FIELD } from "./honeypot";
+
+export { HONEYPOT_FIELD };
 
 const URL_PATTERN = /^https?:\/\/[^\s/$.?#][^\s]*\.[^\s]{2,}$/i;
 
@@ -50,7 +52,11 @@ export async function submitApplication(
 ): Promise<ApplicationResult> {
   // Looks like success to a bot, but nothing is saved.
   const trap = input[HONEYPOT_FIELD];
-  if (typeof trap === "string" && trap.trim() !== "") return { status: "RECEIVED" };
+  if (typeof trap === "string" && trap.trim() !== "") {
+    // Logged without any form data, so a wrongly caught person can be noticed.
+    console.warn("Join form: hidden spam field was filled; application not saved.");
+    return { status: "RECEIVED" };
+  }
 
   const parsed = applicationSchema.safeParse(input);
   if (!parsed.success) {

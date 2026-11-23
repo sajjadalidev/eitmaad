@@ -116,7 +116,25 @@ export interface VendorApplicationRecord {
   createdAt: Date;
 }
 
+export interface AdminOverview {
+  applicationsWaiting: number;
+  disputesForReview: number;
+  activeVendors: number;
+}
+
+export interface VendorOverview {
+  ordersReported30Days: number;
+  lookupsToday: number;
+  ordersMissingReason: number;
+  openDisputes: number;
+}
+
 export interface EtimaadStore {
+  // Counts for the admin console overview (blueprint section 20.3).
+  adminOverview(): Promise<AdminOverview>;
+  // Counts for one vendor's portal overview (blueprint section 20.2).
+  vendorOverview(vendorId: string, since30Days: Date, dayStart: Date): Promise<VendorOverview>;
+
   // Maps a Supabase Auth user to an ADMIN_USERS or VENDOR_USERS row (admin wins if both exist).
   findPortalUserByAuthId(authUserId: string): Promise<PortalUser | null>;
 

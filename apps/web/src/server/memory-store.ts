@@ -4,7 +4,9 @@ import { randomUUID } from "node:crypto";
 import type { TrustProfile, VendorCustomerScore } from "@etimaad/core";
 import type { PortalUser } from "./users";
 import type {
+  AdminOverview,
   ApiKeyRecord,
+  VendorOverview,
   EtimaadStore,
   LookupRecord,
   OrderEventRecord,
@@ -30,6 +32,24 @@ export class InMemoryStore implements EtimaadStore {
   readonly lookups: LookupRecord[] = [];
   readonly applications: VendorApplicationRecord[] = [];
   readonly portalUsers = new Map<string, PortalUser>();
+
+  async adminOverview(): Promise<AdminOverview> {
+    return {
+      applicationsWaiting: this.applications.filter((a) => a.status === "NEW" || a.status === "REVIEWING").length,
+      disputesForReview: 0,
+      activeVendors: [...this.vendors.values()].filter((v) => v.status === "ACTIVE").length,
+    };
+  }
+
+  async vendorOverview(vendorId: string, since30Days: Date, dayStart: Date): Promise<VendorOverview> {
+    const own = [...this.orders.values()].filter((o) => o.vendorId === vendorId);
+    return {
+      ordersReported30Days: own.filter((o) => o.occurredAt >= since30Days).length,
+      lookupsToday: this.lookups.filter((l) => l.vendorId === vendorId && l.createdAt >= dayStart).length,
+      ordersMissingReason: own.filter((o) => o.reasonCode === "OTHER").length,
+      openDisputes: 0,
+    };
+  }
 
   async findPortalUserByAuthId(authUserId: string) {
     return this.portalUsers.get(authUserId) ?? null;

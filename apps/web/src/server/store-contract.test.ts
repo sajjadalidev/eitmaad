@@ -245,6 +245,35 @@ describe.each(HARNESSES)("%s", (_name, make) => {
     });
   });
 
+  it("reports admin and vendor overview counts", async () => {
+    await withHarness(make, async (store) => {
+      await report(store, "a", [event({ phone: "03001010101" }), refusal({ phone: "03001010101", reason_code: "OTHER" })]);
+      await check(store, "a", "03001010101");
+      await store.saveApplication({
+        id: "00000000-0000-4000-8000-000000000010",
+        legalName: "Acme Traders Pvt Ltd",
+        displayName: "Acme",
+        category: "ecommerce",
+        businessType: "PVT_LTD",
+        platform: "API",
+        storeUrl: null,
+        contactName: "Ali",
+        contactEmail: "a@shop.pk",
+        ipHash: null,
+        status: "NEW",
+        createdAt: NOW,
+      });
+
+      expect(await store.adminOverview()).toEqual({ applicationsWaiting: 1, disputesForReview: 0, activeVendors: 4 });
+      expect(
+        await store.vendorOverview(VENDOR_ID.a, new Date(NOW.getTime() - 30 * 86_400_000), new Date(NOW.getTime() - 3_600_000)),
+      ).toEqual({ ordersReported30Days: 2, lookupsToday: 1, ordersMissingReason: 1, openDisputes: 0 });
+      expect(
+        await store.vendorOverview(VENDOR_ID.b, new Date(NOW.getTime() - 30 * 86_400_000), new Date(NOW.getTime() - 3_600_000)),
+      ).toEqual({ ordersReported30Days: 0, lookupsToday: 0, ordersMissingReason: 0, openDisputes: 0 });
+    });
+  });
+
   it("counts lookups for the quota", async () => {
     await withHarness(make, async (store) => {
       for (let i = 0; i < 3; i++) await check(store, "a", "03009999999");

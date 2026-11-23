@@ -6,6 +6,7 @@ import {
   customerIdentifiers,
   customers,
   customerTrustProfiles,
+  disputes,
   idempotencyKeys,
   lookupAuditLog,
   orderEvents,
@@ -22,7 +23,9 @@ import { and, count, desc, eq, gte, inArray, sql } from "drizzle-orm";
 import type { PgDatabase } from "drizzle-orm/pg-core";
 import { openSecret } from "./secret-box";
 import type {
+  AdminOverview,
   ApiKeyRecord,
+  VendorOverview,
   ApiScope,
   EtimaadStore,
   LookupRecord,
@@ -120,6 +123,53 @@ export class PostgresStore implements EtimaadStore {
     private readonly db: AnyPgDatabase,
     private readonly options: PostgresStoreOptions,
   ) {}
+
+  async adminOverview(): Promise<AdminOverview> {
+    const [[applications], [openDisputes], [activeVendors]] = await Promise.all([
+      this.db
+        .select({ n: count() })
+        .from(vendorApplications)
+        .where(inArray(vendorApplications.status, ["NEW", "REVIEWING"])),
+      this.db
+        .select({ n: count() })
+        .from(disputes)
+        .where(inArray(disputes.status, ["OPEN", "AWAITING_VENDOR"])),
+      this.db.select({ n: count() }).from(vendors).where(eq(vendors.status, "ACTIVE")),
+    ]);
+    return {
+      applicationsWaiting: applications?.n ?? 0,
+      disputesForReview: openDisputes?.n ?? 0,
+      activeVendors: activeVendors?.n ?? 0,
+    };
+  }
+
+  async vendorOverview(vendorId: string, since30Days: Date, dayStart: Date): Promise<VendorOverview> {
+    const [[reported], [lookups], [missing], [open]] = await Promise.all([
+      this.db
+        .select({ n: count() })
+        .from(orders)
+        .where(and(eq(orders.vendorId, vendorId), gte(orders.occurredAt, since30Days))),
+      this.db
+        .select({ n: count() })
+        .from(lookupAuditLog)
+        .where(and(eq(lookupAuditLog.vendorId, vendorId), gte(lookupAuditLog.createdAt, dayStart))),
+      this.db
+        .select({ n: count() })
+        .from(orders)
+        .where(and(eq(orders.vendorId, vendorId), eq(orders.reasonCode, "OTHER"))),
+      this.db
+        .select({ n: count() })
+        .from(disputes)
+        .innerJoin(orders, eq(orders.id, disputes.orderId))
+        .where(and(eq(orders.vendorId, vendorId), inArray(disputes.status, ["OPEN", "AWAITING_VENDOR"]))),
+    ]);
+    return {
+      ordersReported30Days: reported?.n ?? 0,
+      lookupsToday: lookups?.n ?? 0,
+      ordersMissingReason: missing?.n ?? 0,
+      openDisputes: open?.n ?? 0,
+    };
+  }
 
   async findPortalUserByAuthId(authUserId: string): Promise<PortalUser | null> {
     const [admin] = await this.db.select().from(adminUsers).where(eq(adminUsers.authUserId, authUserId)).limit(1);
