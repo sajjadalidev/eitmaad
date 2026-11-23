@@ -10,6 +10,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "demo": "node scripts/demo.mjs",
+    "seed-demo": "node scripts/seed-demo.mjs",
     "create-vendor": "tsx scripts/create-vendor.ts",
     "link-user": "tsx scripts/link-user.ts"
   },
