@@ -48,7 +48,9 @@ export function ReviewPanel(props: ReviewPanelProps) {
           and link it with the link-user script.
         </p>
         <p>
-          <Link href="/admin/vendors">Back to vendors</Link>
+          <Link href={`/admin/vendors/${c.vendorId}`}>Open the new vendor profile</Link>
+          {" · "}
+          <Link href="/admin/applications">Back to applications</Link>
         </p>
       </div>
     );

@@ -1025,8 +1025,9 @@ All three live in the same Next.js app (`apps/web`) and the same deployment.
 
 | Page | What the operator can do |
 |---|---|
-| `/admin` | Overview: KYC queue, open disputes, anomaly alerts |
-| `/admin/vendors` | All vendors with 30-day activity, and the list of applications |
+| `/admin` | Overview: applications to review, waiting for documents, live vendors by status, disputes. Each card opens its list. |
+| `/admin/applications` | All applications with status tabs and the next step for each (§20.3.1) |
+| `/admin/vendors` | Approved vendors with status tabs, KYC, trust, dates and 30-day activity |
 | `/admin/applications/[id]` | Review one application: details, cross checks, decision, history |
 | `/admin/vendors/[id]` | One vendor's profile, data quality checks and actions (§20.3.2) |
 | `/admin/customers` | Find a customer by mobile number and see the detail (§20.3.3) |

@@ -280,7 +280,13 @@ describe.each(HARNESSES)("%s", (_name, make) => {
         createdAt: NOW,
       });
 
-      expect(await store.adminOverview()).toEqual({ applicationsWaiting: 1, disputesForReview: 0, activeVendors: 4 });
+      expect(await store.adminOverview()).toEqual({
+        applications: { NEW: 1, REVIEWING: 0, DOCUMENTS_REQUESTED: 0, APPROVED: 0, REJECTED: 0 },
+        vendors: { PENDING_VERIFICATION: 0, PROBATION: 0, ACTIVE: 4, RESTRICTED: 0, TERMINATED: 0 },
+        disputesForReview: 0,
+      });
+      expect(await store.listApplications(10, "NEW")).toHaveLength(1);
+      expect(await store.listApplications(10, "APPROVED")).toHaveLength(0);
       expect(
         await store.vendorOverview(VENDOR_ID.a, new Date(NOW.getTime() - 30 * 86_400_000), new Date(NOW.getTime() - 3_600_000)),
       ).toEqual({ ordersReported30Days: 2, lookupsToday: 1, ordersMissingReason: 1, openDisputes: 0 });
@@ -299,6 +305,8 @@ describe.each(HARNESSES)("%s", (_name, make) => {
       const summaries = await store.listVendorSummaries(since);
       expect(summaries.map((s) => s.displayName)).toEqual(["Vendor a", "Vendor b", "Vendor c", "Vendor d"]);
       expect(summaries[0]).toMatchObject({ orders30Days: 2, userFaults30Days: 1, lookups30Days: 1, portalUsers: 0 });
+      expect(summaries[0]?.legalName).toMatch(/^Vendor a/);
+      expect(summaries[0]?.createdAt).toBeInstanceOf(Date);
       expect(summaries[1]).toMatchObject({ orders30Days: 0, userFaults30Days: 0, lookups30Days: 0 });
 
       const orders = await store.listVendorOrders(VENDOR_ID.a, 10);

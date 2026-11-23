@@ -1,11 +1,11 @@
 // In-memory store for local development and tests. Data lives only in this process.
 
 import { randomUUID } from "node:crypto";
-import { FAULT_CLASSES, sha256Hex, type TrustProfile, type VendorCustomerScore } from "@etimaad/core";
+import { FAULT_CLASSES, VENDOR_STATUSES, sha256Hex, type TrustProfile, type VendorCustomerScore } from "@etimaad/core";
 import { toVendorEvent, vendorAuditRow, type VendorAuditRow } from "./vendor-audit";
 import { adminAuditValues, toAdminAuditRow } from "./admin-audit";
 import { applicationAuditRow, toApplicationEvent, type AuditRowValues } from "./application-audit";
-import { API_SCOPES } from "./store";
+import { API_SCOPES, APPLICATION_STATUSES, type ApplicationStatus } from "./store";
 import type { PortalUser } from "./users";
 import { generateApiCredentials } from "./vendor-admin";
 import type {
@@ -71,11 +71,11 @@ export class InMemoryStore implements EtimaadStore {
   >();
 
   async adminOverview(): Promise<AdminOverview> {
-    return {
-      applicationsWaiting: this.applications.filter((a) => a.status === "NEW" || a.status === "REVIEWING").length,
-      disputesForReview: 0,
-      activeVendors: [...this.vendors.values()].filter((v) => v.status === "ACTIVE").length,
-    };
+    const applications = Object.fromEntries(APPLICATION_STATUSES.map((s) => [s, 0])) as AdminOverview["applications"];
+    for (const a of this.applications) applications[a.status]++;
+    const vendors = Object.fromEntries(VENDOR_STATUSES.map((s) => [s, 0])) as AdminOverview["vendors"];
+    for (const v of this.vendors.values()) vendors[v.status]++;
+    return { applications, vendors, disputesForReview: 0 };
   }
 
   async vendorOverview(vendorId: string, since30Days: Date, dayStart: Date): Promise<VendorOverview> {
@@ -94,11 +94,17 @@ export class InMemoryStore implements EtimaadStore {
     return [...this.vendors.values()]
       .map((v) => {
         const own = orders.filter((o) => o.vendorId === v.id);
+        const extra = this.vendorExtras.get(v.id);
         return {
           id: v.id,
           displayName: v.displayName,
+          legalName: extra?.legalName ?? v.displayName,
+          category: extra?.category ?? ("ecommerce" as const),
           status: v.status,
           trustWeight: v.trustWeight,
+          kycLevel: extra?.kycLevel ?? null,
+          createdAt: extra?.createdAt ?? this.startedAt,
+          probationEndsAt: extra?.probationEndsAt ?? null,
           orders30Days: own.length,
           userFaults30Days: own.filter((o) => o.derivedFault === "USER").length,
           lookups30Days: this.lookups.filter((l) => l.vendorId === v.id && l.createdAt >= since).length,
@@ -147,8 +153,8 @@ export class InMemoryStore implements EtimaadStore {
     ).length;
   }
 
-  async listApplications(limit: number) {
-    return [...this.applications].sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime()).slice(0, limit);
+  async listApplications(limit: number, status?: ApplicationStatus) {
+    return this.applications.filter((a) => !status || a.status === status).sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime()).slice(0, limit);
   }
 
   async getApplication(id: string): Promise<ApplicationDetail | null> {

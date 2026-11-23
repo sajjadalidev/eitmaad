@@ -40,6 +40,7 @@ export async function reviewAction(_previous: ReviewState, formData: FormData): 
 
     revalidatePath(`/admin/applications/${applicationId}`);
     revalidatePath("/admin/vendors");
+    revalidatePath("/admin/applications");
     revalidatePath("/admin");
     return { status: "SAVED", message: "Saved.", credentials: result.credentials ?? null };
   } catch (error) {

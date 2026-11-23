@@ -13,7 +13,7 @@ import {
 } from "@/server/application-review";
 import { getRuntime } from "@/server/config";
 import { requireSession } from "@/server/require-session";
-import type { ReviewAction } from "@/server/store";
+import type { ApplicationStatus, ReviewAction } from "@/server/store";
 import { ReviewPanel } from "./review-panel";
 
 export const dynamic = "force-dynamic";
@@ -43,6 +43,44 @@ function hostOf(url: string | null): string | null {
     return new URL(url).hostname.replace(/^www\./, "").toLowerCase();
   } catch {
     return null;
+  }
+}
+
+type StepState = "done" | "current" | "todo" | "stopped";
+
+// The four review steps and where this application is.
+function steps(status: ApplicationStatus, docsAsked: boolean): { label: string; state: StepState }[] {
+  const docs = docsAsked ? "Documents received" : "Documents (if needed)";
+  switch (status) {
+    case "NEW":
+      return [
+        { label: "1. Received", state: "current" },
+        { label: "2. Under review", state: "todo" },
+        { label: `3. ${docs}`, state: "todo" },
+        { label: "4. Approve or reject", state: "todo" },
+      ];
+    case "REVIEWING":
+      return [
+        { label: "1. Received", state: "done" },
+        { label: "2. Under review", state: "current" },
+        { label: `3. ${docs}`, state: docsAsked ? "done" : "todo" },
+        { label: "4. Approve or reject", state: "todo" },
+      ];
+    case "DOCUMENTS_REQUESTED":
+      return [
+        { label: "1. Received", state: "done" },
+        { label: "2. Under review", state: "done" },
+        { label: "3. Waiting for documents", state: "current" },
+        { label: "4. Approve or reject", state: "todo" },
+      ];
+    case "APPROVED":
+    case "REJECTED":
+      return [
+        { label: "1. Received", state: "done" },
+        { label: "2. Under review", state: "done" },
+        { label: `3. ${docsAsked ? "Documents received" : "No documents asked"}`, state: docsAsked ? "done" : "todo" },
+        { label: status === "APPROVED" ? "4. Approved" : "4. Rejected", state: status === "APPROVED" ? "done" : "stopped" },
+      ];
   }
 }
 
@@ -77,11 +115,18 @@ export default async function ApplicationPage({ params }: { params: Promise<{ id
   return (
     <>
       <p className="small">
-        <Link href="/admin/vendors">Back to vendors and applications</Link>
+        <Link href="/admin/applications">Back to applications</Link>
       </p>
       <h1>
         {application.displayName} <span className="badge">{STATUS_LABEL[application.status]}</span>
       </h1>
+      <ol className="steps" aria-label="Review progress">
+        {steps(application.status, history.some((e) => e.action === "REQUEST_DOCUMENTS")).map((s) => (
+          <li key={s.label} data-state={s.state} aria-current={s.state === "current" ? "step" : undefined}>
+            {s.label}
+          </li>
+        ))}
+      </ol>
 
       <div className="grid grid-2">
         <div className="card stack">

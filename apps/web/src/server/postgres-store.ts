@@ -17,7 +17,8 @@ import {
   vendorUsers,
   vendors,
 } from "@etimaad/db";
-import { FAULT_CLASSES, vendorCanUseApi } from "@etimaad/core";
+import { FAULT_CLASSES, VENDOR_STATUSES, vendorCanUseApi } from "@etimaad/core";
+import { APPLICATION_STATUSES, type ApplicationStatus } from "./store";
 import { VENDOR_ENTITY, toVendorEvent, vendorAuditRow } from "./vendor-audit";
 import { adminAuditValues, toAdminAuditRow } from "./admin-audit";
 import type { PortalUser } from "./users";
@@ -142,6 +143,13 @@ function eventValues(event: OrderEventRecord) {
 
 class StaleChange extends Error {}
 
+// Turns grouped count rows into a full map with zero for missing keys.
+function countBy<K extends string>(keys: readonly K[], rows: { status: K; n: number }[]): Record<K, number> {
+  const out = Object.fromEntries(keys.map((k) => [k, 0])) as Record<K, number>;
+  for (const r of rows) out[r.status] = r.n;
+  return out;
+}
+
 async function updateApplication(db: AnyPgDatabase, change: ApplicationChange, vendorId: string | null): Promise<boolean> {
   const rows = await db
     .update(vendorApplications)
@@ -164,21 +172,21 @@ export class PostgresStore implements EtimaadStore {
   ) {}
 
   async adminOverview(): Promise<AdminOverview> {
-    const [[applications], [openDisputes], [activeVendors]] = await Promise.all([
+    const [applicationRows, [openDisputes], vendorRows] = await Promise.all([
       this.db
-        .select({ n: count() })
+        .select({ status: vendorApplications.status, n: count() })
         .from(vendorApplications)
-        .where(inArray(vendorApplications.status, ["NEW", "REVIEWING"])),
+        .groupBy(vendorApplications.status),
       this.db
         .select({ n: count() })
         .from(disputes)
         .where(inArray(disputes.status, ["OPEN", "AWAITING_VENDOR"])),
-      this.db.select({ n: count() }).from(vendors).where(eq(vendors.status, "ACTIVE")),
+      this.db.select({ status: vendors.status, n: count() }).from(vendors).groupBy(vendors.status),
     ]);
     return {
-      applicationsWaiting: applications?.n ?? 0,
+      applications: countBy(APPLICATION_STATUSES, applicationRows),
+      vendors: countBy(VENDOR_STATUSES, vendorRows),
       disputesForReview: openDisputes?.n ?? 0,
-      activeVendors: activeVendors?.n ?? 0,
     };
   }
 
@@ -216,8 +224,13 @@ export class PostgresStore implements EtimaadStore {
         .select({
           id: vendors.id,
           displayName: vendors.displayName,
+          legalName: vendors.legalName,
+          category: vendors.category,
           status: vendors.status,
           trustWeight: vendors.trustWeight,
+          kycLevel: vendors.kycLevel,
+          createdAt: vendors.createdAt,
+          probationEndsAt: vendors.probationEndsAt,
         })
         .from(vendors)
         .orderBy(vendors.displayName),
@@ -496,10 +509,11 @@ export class PostgresStore implements EtimaadStore {
     return row?.n ?? 0;
   }
 
-  async listApplications(limit: number): Promise<VendorApplicationRecord[]> {
+  async listApplications(limit: number, status?: ApplicationStatus): Promise<VendorApplicationRecord[]> {
     const rows = await this.db
       .select()
       .from(vendorApplications)
+      .where(status ? eq(vendorApplications.status, status) : undefined)
       .orderBy(desc(vendorApplications.createdAt))
       .limit(limit);
     return rows.map((r) => ({

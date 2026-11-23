@@ -1,49 +1,18 @@
+import { VENDOR_STATUSES, type VendorStatus } from "@etimaad/core";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { DataTable } from "@/components/data-table";
-import { APPLICATION_STATUS_LABEL } from "@/server/application-review";
-import { VENDOR_STATUS_LABEL } from "@/server/vendor-management";
 import { getRuntime } from "@/server/config";
-import type { VendorApplicationRecord, VendorSummary } from "@/server/store";
+import { requireSession } from "@/server/require-session";
+import type { VendorSummary } from "@/server/store";
+import { VENDOR_STATUS_LABEL } from "@/server/vendor-management";
 
 export const dynamic = "force-dynamic";
 
+export const metadata: Metadata = { title: "Vendors" };
+
 const DAY_MS = 86_400_000;
-
-export const metadata: Metadata = { title: "Vendors and KYC" };
-
-const DOCUMENTS = [
-  ["Private Ltd", "SECP certificate + NTN", "None"],
-  ["Partnership", "Firm registration + NTN", "None"],
-  ["Sole proprietor", "NTN in owner's name", "Owner CNIC + one business proof"],
-] as const;
-
-const CHECKS = [
-  "NTN appears on the FBR Active Taxpayer List.",
-  "CNIC is not already used by another vendor.",
-  "Store ownership is proven by a plugin or app install.",
-  "Data sharing agreement is accepted.",
-];
-
-const RED_FLAGS = [
-  "Brand-new store with no order history.",
-  "CNIC name and business name do not match.",
-  "Many failures reported right after joining.",
-];
-
-const BUSINESS_TYPE_LABEL: Record<VendorApplicationRecord["businessType"], string> = {
-  PVT_LTD: "Private Ltd",
-  PARTNERSHIP: "Partnership",
-  SOLE_PROPRIETOR: "Sole proprietor",
-};
-
-async function loadApplications(): Promise<VendorApplicationRecord[] | null> {
-  try {
-    return await getRuntime().store.listApplications(50);
-  } catch {
-    return null;
-  }
-}
+const day = (d: Date | null) => (d ? d.toISOString().slice(0, 10) : "-");
 
 async function loadVendors(): Promise<VendorSummary[] | null> {
   try {
@@ -53,93 +22,82 @@ async function loadVendors(): Promise<VendorSummary[] | null> {
   }
 }
 
-export default async function AdminVendorsPage() {
-  const [applications, vendors] = await Promise.all([loadApplications(), loadVendors()]);
-  const vendorRows = (vendors ?? []).map((v) => [
-    <Link key="n" href={`/admin/vendors/${v.id}`}>
-      <strong>{v.displayName}</strong>
-    </Link>,
-    <span key="s" className="badge">
-      {VENDOR_STATUS_LABEL[v.status]}
-    </span>,
-    v.trustWeight.toFixed(2),
-    v.orders30Days,
-    v.userFaults30Days,
-    v.lookups30Days,
-    v.portalUsers,
-  ]);
-  const rows = (applications ?? []).map((a) => [
-    a.createdAt.toISOString().slice(0, 16).replace("T", " "),
-    <span key="b">
-      <Link href={`/admin/applications/${a.id}`}>
-        <strong>{a.displayName}</strong>
+export default async function AdminVendorsPage({ searchParams }: { searchParams: Promise<{ status?: string }> }) {
+  await requireSession("admin");
+  const raw = (await searchParams).status;
+  const status = (VENDOR_STATUSES as readonly string[]).includes(raw ?? "") ? (raw as VendorStatus) : undefined;
+  const all = await loadVendors();
+  const vendors = (all ?? []).filter((v) => !status || v.status === status);
+
+  const rows = vendors.map((v) => [
+    <span key="n">
+      <Link href={`/admin/vendors/${v.id}`}>
+        <strong>{v.displayName}</strong>
       </Link>
       <br />
-      <span className="muted small">{a.legalName}</span>
+      <span className="muted small">
+        {v.legalName}, {v.category}
+      </span>
     </span>,
-    `${a.category} / ${BUSINESS_TYPE_LABEL[a.businessType]}`,
-    a.platform,
-    <span key="c">
-      {a.contactName}
+    <span key="s">
+      <span className="badge">{VENDOR_STATUS_LABEL[v.status]}</span>
       <br />
-      <span className="muted small">{a.contactEmail}</span>
+      <span className="muted small">
+        KYC {v.kycLevel ? v.kycLevel.toLowerCase() : "not recorded"}, trust {v.trustWeight.toFixed(2)}
+      </span>
     </span>,
-    <span key="s" className="badge">
-      {APPLICATION_STATUS_LABEL[a.status]}
+    <span key="d" className="small">
+      Joined {day(v.createdAt)}
+      {v.status === "PROBATION" && (
+        <>
+          <br />
+          Probation ends {day(v.probationEndsAt)}
+        </>
+      )}
     </span>,
-    <Link key="r" className="btn" href={`/admin/applications/${a.id}`}>
-      {a.status === "APPROVED" || a.status === "REJECTED" ? "View" : "Review"}
+    <span key="a" className="small">
+      {v.orders30Days} orders
+      <br />
+      {v.userFaults30Days} customer faults
+      <br />
+      {v.lookups30Days} risk checks
+    </span>,
+    v.portalUsers,
+    <Link key="o" className="btn" href={`/admin/vendors/${v.id}`}>
+      Open
     </Link>,
   ]);
 
+  const count = (s: VendorStatus) => (all ?? []).filter((v) => v.status === s).length;
+  const tabs = [
+    { label: `All (${all?.length ?? 0})`, href: "/admin/vendors", current: !status },
+    ...VENDOR_STATUSES.filter((s) => s !== "PENDING_VERIFICATION" || count(s) > 0).map((s) => ({
+      label: `${VENDOR_STATUS_LABEL[s]} (${count(s)})`,
+      href: `/admin/vendors?status=${s}`,
+      current: status === s,
+    })),
+  ];
+
   return (
     <>
-      <h1>Vendors and KYC</h1>
-      <h2>Vendors</h2>
-      {vendors === null && <p className="notice">Vendors could not be loaded. Check the database settings.</p>}
+      <h1>Vendors</h1>
+      <p className="muted">
+        Stores that are approved and connected. New stores come from <Link href="/admin/applications">Applications</Link>.
+        Open a store to see its full profile, data quality checks and actions.
+      </p>
+      <nav className="tabs" aria-label="Filter by status">
+        {tabs.map((t) => (
+          <Link key={t.href} href={t.href} aria-current={t.current ? "page" : undefined}>
+            {t.label}
+          </Link>
+        ))}
+      </nav>
+      {all === null && <p className="notice">Vendors could not be loaded. Check the database settings.</p>}
       <DataTable
-        columns={[
-          "Store",
-          "Status",
-          "Trust weight",
-          "Orders (30 days)",
-          "Customer faults (30 days)",
-          "Risk checks (30 days)",
-          "Portal users",
-        ]}
-        rows={vendorRows}
-        emptyMessage="No vendors yet."
-      />
-      <h2>Applications</h2>
-      {applications === null && <p className="notice">Applications could not be loaded. Check the database settings.</p>}
-      <DataTable
-        columns={["Applied (UTC)", "Business", "Category / type", "Platform", "Contact", "Status", ""]}
+        columns={["Store", "Status", "Dates", "Last 30 days", "Users", ""]}
         rows={rows}
-        emptyMessage="No applications yet."
+        emptyMessage={status ? "No vendors with this status." : "No vendors yet."}
       />
-      <h2>Accepted documents</h2>
-      <DataTable
-        columns={["Business type", "Full KYC (trust up to 1.0)", "Light KYC (trust up to 0.7)"]}
-        rows={DOCUMENTS.map((r) => [...r])}
-      />
-      <div className="grid grid-2">
-        <div className="card">
-          <h3>Before approving</h3>
-          <ul className="check-list">
-            {CHECKS.map((c) => (
-              <li key={c}>{c}</li>
-            ))}
-          </ul>
-        </div>
-        <div className="card">
-          <h3>Red flags</h3>
-          <ul>
-            {RED_FLAGS.map((c) => (
-              <li key={c}>{c}</li>
-            ))}
-          </ul>
-        </div>
-      </div>
     </>
   );
 }

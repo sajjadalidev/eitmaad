@@ -297,9 +297,9 @@ export interface AdminAuditRow {
 }
 
 export interface AdminOverview {
-  applicationsWaiting: number;
+  applications: Record<ApplicationStatus, number>;
+  vendors: Record<VendorStatus, number>;
   disputesForReview: number;
-  activeVendors: number;
 }
 
 export interface VendorOverview {
@@ -313,8 +313,13 @@ export interface VendorOverview {
 export interface VendorSummary {
   id: string;
   displayName: string;
+  legalName: string;
+  category: (typeof VENDOR_CATEGORIES)[number];
   status: VendorStatus;
   trustWeight: number;
+  kycLevel: "FULL" | "LIGHT" | null;
+  createdAt: Date;
+  probationEndsAt: Date | null;
   orders30Days: number;
   userFaults30Days: number;
   lookups30Days: number;
@@ -360,7 +365,8 @@ export interface EtimaadStore {
   saveApplication(application: VendorApplicationRecord): Promise<void>;
   // Counts applications since a time, by email or by IP hash (for spam limits).
   countApplicationsSince(filter: { contactEmail?: string; ipHash?: string }, since: Date): Promise<number>;
-  listApplications(limit: number): Promise<VendorApplicationRecord[]>;
+  // Newest first; only one status when given.
+  listApplications(limit: number, status?: ApplicationStatus): Promise<VendorApplicationRecord[]>;
   getApplication(id: string): Promise<ApplicationDetail | null>;
   listApplicationHistory(id: string): Promise<ApplicationEvent[]>;
   findApplicationMatches(application: VendorApplicationRecord): Promise<ApplicationMatches>;

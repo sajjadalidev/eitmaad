@@ -7,7 +7,8 @@ export const metadata: Metadata = { title: { default: "Admin", template: "%s | A
 
 const NAV = [
   { href: "/admin", label: "Overview" },
-  { href: "/admin/vendors", label: "Vendors and KYC" },
+  { href: "/admin/applications", label: "Applications" },
+  { href: "/admin/vendors", label: "Vendors" },
   { href: "/admin/customers", label: "Customers" },
   { href: "/admin/disputes", label: "Disputes" },
   { href: "/admin/scoring", label: "Scoring model" },
