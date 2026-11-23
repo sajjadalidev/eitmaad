@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { logoutAction } from "@/server/auth-actions";
+import { configSummary } from "@/server/config";
 import { Brand } from "./brand";
 import { PortalNav, type NavItem } from "./portal-nav";
 
@@ -31,10 +32,11 @@ export function PortalShell({
         </div>
       </aside>
       <main className="portal-main">
-        <div className="notice" role="status">
-          Preview. You are logged in with a local dev account. The database is not connected, so no real data is
-          shown.
-        </div>
+        {configSummary().store === "memory" && (
+          <div className="notice" role="status">
+            Local development. You are logged in with a dev account and data is kept in memory only.
+          </div>
+        )}
         {children}
       </main>
     </div>
