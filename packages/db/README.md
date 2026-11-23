@@ -7,7 +7,7 @@ Drizzle schema and SQL migrations. Design: blueprint section 8.1.
 | File | What it is |
 |---|---|
 | `src/enums.ts` | Postgres enums. Shared values come from `@etimaad/core`. |
-| `src/schema.ts` | All 21 tables |
+| `src/schema.ts` | All 22 tables |
 | `src/client.ts` | `createDb(url)` for the Supabase pooler (prepared statements off) |
 | `src/seed-data.ts` | Rows for `reason_codes` and `score_model_versions`. Builds rows only. |
 | `migrations/` | Generated SQL plus hand-written parts |
@@ -19,6 +19,7 @@ Drizzle schema and SQL migrations. Design: blueprint section 8.1.
 |---|---|
 | `0000_init.sql` | `order_events` and `lookup_audit_log` are `PARTITION BY RANGE` (monthly); `ensure_monthly_partition()`; partitions for the current month and the next 2 |
 | `0003_lock_down_public_access.sql` | Row level security on every table, no grants for Supabase `anon` and `authenticated`, new partitions get row level security too |
+| `0004_vendor_applications.sql` | Last line: row level security on the new table. **Every new table needs this line.** |
 
 Drizzle does not know about partitioning or row level security. Keep these parts if a migration is regenerated.
 
@@ -45,5 +46,5 @@ DATABASE_MIGRATION_URL=... pnpm db:seed-reference --yes
 
 ## Status
 
-- Supabase (Mumbai): migrations 0000 to 0003 applied.
+- Supabase (Mumbai): migrations 0000 to 0004 applied.
 - Reference data seeded: 16 reason codes, scoring model v1. All other tables are empty.

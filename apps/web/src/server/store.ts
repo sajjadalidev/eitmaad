@@ -96,7 +96,31 @@ export interface LookupRecord {
   latencyMs: number;
 }
 
+export const VENDOR_CATEGORIES = ["food", "ecommerce", "retail"] as const;
+export const BUSINESS_TYPES = ["PVT_LTD", "PARTNERSHIP", "SOLE_PROPRIETOR"] as const;
+export const APPLICATION_STATUSES = ["NEW", "REVIEWING", "APPROVED", "REJECTED"] as const;
+
+export interface VendorApplicationRecord {
+  id: string;
+  legalName: string;
+  displayName: string;
+  category: (typeof VENDOR_CATEGORIES)[number];
+  businessType: (typeof BUSINESS_TYPES)[number];
+  platform: SourcePlatform;
+  storeUrl: string | null;
+  contactName: string;
+  contactEmail: string;
+  ipHash: string | null;
+  status: (typeof APPLICATION_STATUSES)[number];
+  createdAt: Date;
+}
+
 export interface EtimaadStore {
+  saveApplication(application: VendorApplicationRecord): Promise<void>;
+  // Counts applications since a time, by email or by IP hash (for spam limits).
+  countApplicationsSince(filter: { contactEmail?: string; ipHash?: string }, since: Date): Promise<number>;
+  listApplications(limit: number): Promise<VendorApplicationRecord[]>;
+
   findApiKeyByPrefix(prefix: string): Promise<ApiKeyRecord | null>;
   resolveSigningSecret(ref: string): Promise<string | null>;
   getVendor(id: string): Promise<VendorRecord | null>;

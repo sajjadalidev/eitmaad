@@ -42,7 +42,7 @@ describe("migrations on in-memory Postgres", () => {
        where n.nspname = 'public' and c.relkind in ('r', 'p') and not c.relispartition
        order by c.relname`,
     );
-    expect(schemaTableNames).toHaveLength(21);
+    expect(schemaTableNames).toHaveLength(22);
     expect(rows.map((r) => r.relname)).toEqual(schemaTableNames);
   });
 

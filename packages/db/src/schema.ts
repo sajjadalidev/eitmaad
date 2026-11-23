@@ -50,6 +50,8 @@ import {
   vendorCategoryEnum,
   vendorStatusEnum,
   vendorUserRoleEnum,
+  applicationStatusEnum,
+  businessTypeEnum,
 } from "./enums";
 
 export * from "./enums";
@@ -96,6 +98,33 @@ export const vendors = pgTable("vendors", {
   createdAt: createdAt(),
   updatedAt: updatedAt(),
 });
+
+// Sign-up requests from the public /join form (blueprint section 20.1). Reviewed by an admin before any vendor exists.
+export const vendorApplications = pgTable(
+  "vendor_applications",
+  {
+    id: id(),
+    legalName: text("legal_name").notNull(),
+    displayName: text("display_name").notNull(),
+    category: vendorCategoryEnum("category").notNull(),
+    businessType: businessTypeEnum("business_type").notNull(),
+    platform: sourcePlatformEnum("platform").notNull(),
+    storeUrl: text("store_url"),
+    contactName: text("contact_name").notNull(),
+    contactEmail: text("contact_email").notNull(),
+    // HMAC of the sender's IP address, only for rate limiting.
+    ipHash: text("ip_hash"),
+    status: applicationStatusEnum("status").notNull().default("NEW"),
+    reviewerNote: text("reviewer_note"),
+    reviewedAt: ts("reviewed_at"),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    index("vendor_applications_email_idx").on(t.contactEmail, t.createdAt),
+    index("vendor_applications_ip_idx").on(t.ipHash, t.createdAt),
+    index("vendor_applications_status_idx").on(t.status, t.createdAt),
+  ],
+);
 
 // People who log in to the vendor portal (blueprint section 20.2).
 export const vendorUsers = pgTable(

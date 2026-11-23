@@ -461,6 +461,19 @@ select:focus {
   outline-offset: 1px;
 }
 
+input[aria-invalid="true"] {
+  border-color: var(--bad);
+}
+
+/* Spam trap field: off screen, never shown to people. */
+.hp {
+  position: absolute;
+  left: -10000px;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+}
+
 /* ---------- Hero ---------- */
 
 .hero {

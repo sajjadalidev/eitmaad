@@ -217,6 +217,34 @@ describe.each(HARNESSES)("%s", (_name, make) => {
     });
   });
 
+  it("saves, counts and lists vendor applications", async () => {
+    await withHarness(make, async (store) => {
+      const base = {
+        legalName: "Acme Traders Pvt Ltd",
+        displayName: "Acme",
+        category: "ecommerce" as const,
+        businessType: "PVT_LTD" as const,
+        platform: "WOOCOMMERCE" as const,
+        storeUrl: null,
+        contactName: "Ali",
+        ipHash: "hash-1",
+        status: "NEW" as const,
+      };
+      await store.saveApplication({ ...base, id: "00000000-0000-4000-8000-000000000001", contactEmail: "a@shop.pk", createdAt: new Date(NOW.getTime() - 2 * 3_600_000) });
+      await store.saveApplication({ ...base, id: "00000000-0000-4000-8000-000000000002", contactEmail: "a@shop.pk", createdAt: NOW });
+      await store.saveApplication({ ...base, id: "00000000-0000-4000-8000-000000000003", contactEmail: "b@shop.pk", createdAt: NOW, ipHash: "hash-2" });
+
+      const hourAgo = new Date(NOW.getTime() - 3_600_000);
+      expect(await store.countApplicationsSince({ contactEmail: "a@shop.pk" }, hourAgo)).toBe(1);
+      expect(await store.countApplicationsSince({ contactEmail: "a@shop.pk" }, new Date(0))).toBe(2);
+      expect(await store.countApplicationsSince({ ipHash: "hash-1" }, new Date(0))).toBe(2);
+
+      const list = await store.listApplications(2);
+      expect(list).toHaveLength(2);
+      expect(list.every((a) => a.createdAt.getTime() === NOW.getTime())).toBe(true);
+    });
+  });
+
   it("counts lookups for the quota", async () => {
     await withHarness(make, async (store) => {
       for (let i = 0; i < 3; i++) await check(store, "a", "03009999999");

@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { JoinForm } from "./join-form";
 
 export const metadata: Metadata = { title: "Join the pilot" };
 
@@ -24,58 +25,7 @@ export default function JoinPage() {
           </ul>
         </div>
 
-        <form className="form card" aria-describedby="join-status">
-          <div className="field">
-            <label htmlFor="legal_name">Business legal name</label>
-            <input id="legal_name" name="legal_name" required />
-          </div>
-          <div className="field">
-            <label htmlFor="display_name">Store or brand name</label>
-            <input id="display_name" name="display_name" required />
-          </div>
-          <div className="field">
-            <label htmlFor="category">Category</label>
-            <select id="category" name="category" defaultValue="ecommerce">
-              <option value="food">Food and restaurants</option>
-              <option value="ecommerce">E-commerce</option>
-              <option value="retail">Retail</option>
-            </select>
-          </div>
-          <div className="field">
-            <label htmlFor="business_type">Business type</label>
-            <select id="business_type" name="business_type" defaultValue="sole">
-              <option value="pvt">Private Ltd</option>
-              <option value="partnership">Partnership</option>
-              <option value="sole">Sole proprietor</option>
-            </select>
-          </div>
-          <div className="field">
-            <label htmlFor="platform">Store platform</label>
-            <select id="platform" name="platform" defaultValue="WOOCOMMERCE">
-              <option value="WOOCOMMERCE">WooCommerce</option>
-              <option value="SHOPIFY">Shopify</option>
-              <option value="API">Custom (API)</option>
-            </select>
-          </div>
-          <div className="field">
-            <label htmlFor="store_url">Store website</label>
-            <input id="store_url" name="store_url" type="url" placeholder="https://" />
-          </div>
-          <div className="field">
-            <label htmlFor="contact_name">Your name</label>
-            <input id="contact_name" name="contact_name" required />
-          </div>
-          <div className="field">
-            <label htmlFor="contact_email">Work email</label>
-            <input id="contact_email" name="contact_email" type="email" required />
-          </div>
-          <button type="submit" className="btn btn-primary" disabled>
-            Submit application
-          </button>
-          <p id="join-status" className="muted small">
-            Applications open with the pilot. This form is not connected yet.
-          </p>
-        </form>
+        <JoinForm />
       </div>
     </section>
   );

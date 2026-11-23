@@ -8,6 +8,7 @@ import type {
   LookupRecord,
   OrderEventRecord,
   OrderRecord,
+  VendorApplicationRecord,
   VendorRecord,
 } from "./store";
 
@@ -26,6 +27,24 @@ export class InMemoryStore implements EtimaadStore {
   readonly profiles = new Map<string, TrustProfile>();
   readonly vendorScores = new Map<string, VendorCustomerScore>();
   readonly lookups: LookupRecord[] = [];
+  readonly applications: VendorApplicationRecord[] = [];
+
+  async saveApplication(application: VendorApplicationRecord) {
+    this.applications.push({ ...application });
+  }
+
+  async countApplicationsSince(filter: { contactEmail?: string; ipHash?: string }, since: Date) {
+    return this.applications.filter(
+      (a) =>
+        a.createdAt >= since &&
+        (filter.contactEmail === undefined || a.contactEmail === filter.contactEmail) &&
+        (filter.ipHash === undefined || a.ipHash === filter.ipHash),
+    ).length;
+  }
+
+  async listApplications(limit: number) {
+    return [...this.applications].sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime()).slice(0, limit);
+  }
 
   addVendor(vendor: VendorRecord): void {
     this.vendors.set(vendor.id, vendor);

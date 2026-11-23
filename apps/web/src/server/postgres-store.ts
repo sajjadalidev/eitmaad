@@ -9,11 +9,12 @@ import {
   lookupAuditLog,
   orderEvents,
   orders,
+  vendorApplications,
   vendorCustomerScores,
   vendors,
 } from "@etimaad/db";
 import type { ScoreBreakdown, TrustProfile, VendorCustomerScore } from "@etimaad/core";
-import { and, count, eq, gte, inArray, sql } from "drizzle-orm";
+import { and, count, desc, eq, gte, inArray, sql } from "drizzle-orm";
 import type { PgDatabase } from "drizzle-orm/pg-core";
 import { openSecret } from "./secret-box";
 import type {
@@ -23,6 +24,7 @@ import type {
   LookupRecord,
   OrderEventRecord,
   OrderRecord,
+  VendorApplicationRecord,
   VendorRecord,
 } from "./store";
 
@@ -114,6 +116,56 @@ export class PostgresStore implements EtimaadStore {
     private readonly db: AnyPgDatabase,
     private readonly options: PostgresStoreOptions,
   ) {}
+
+  async saveApplication(a: VendorApplicationRecord): Promise<void> {
+    await this.db.insert(vendorApplications).values({
+      id: a.id,
+      legalName: a.legalName,
+      displayName: a.displayName,
+      category: a.category,
+      businessType: a.businessType,
+      platform: a.platform,
+      storeUrl: a.storeUrl,
+      contactName: a.contactName,
+      contactEmail: a.contactEmail,
+      ipHash: a.ipHash,
+      status: a.status,
+      createdAt: a.createdAt,
+    });
+  }
+
+  async countApplicationsSince(filter: { contactEmail?: string; ipHash?: string }, since: Date): Promise<number> {
+    const conditions = [gte(vendorApplications.createdAt, since)];
+    if (filter.contactEmail !== undefined) conditions.push(eq(vendorApplications.contactEmail, filter.contactEmail));
+    if (filter.ipHash !== undefined) conditions.push(eq(vendorApplications.ipHash, filter.ipHash));
+    const [row] = await this.db
+      .select({ n: count() })
+      .from(vendorApplications)
+      .where(and(...conditions));
+    return row?.n ?? 0;
+  }
+
+  async listApplications(limit: number): Promise<VendorApplicationRecord[]> {
+    const rows = await this.db
+      .select()
+      .from(vendorApplications)
+      .orderBy(desc(vendorApplications.createdAt))
+      .limit(limit);
+    return rows.map((r) => ({
+      id: r.id,
+      legalName: r.legalName,
+      displayName: r.displayName,
+      category: r.category,
+      businessType: r.businessType,
+      platform: r.platform,
+      storeUrl: r.storeUrl,
+      contactName: r.contactName,
+      contactEmail: r.contactEmail,
+      ipHash: r.ipHash,
+      status: r.status,
+      createdAt: r.createdAt,
+    }));
+  }
 
   async findApiKeyByPrefix(prefix: string): Promise<ApiKeyRecord | null> {
     const [row] = await this.db.select().from(apiKeys).where(eq(apiKeys.keyPrefix, prefix)).limit(1);

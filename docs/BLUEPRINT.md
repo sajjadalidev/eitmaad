@@ -1,6 +1,6 @@
 # Etimaad: System Blueprint v2: Cross-Vendor Customer Trust & Fulfillment Scoring Engine (MVP)
 
-> **Status:** v2.7, 2026-11-20. It replaces the Gemini v1 blueprint and includes the v2 review fixes, the tech stack, the WooCommerce/Shopify connectors and the web surfaces (changelog in §21).
+> **Status:** v2.8, 2026-11-23. It replaces the Gemini v1 blueprint and includes the v2 review fixes, the tech stack, the WooCommerce/Shopify connectors and the web surfaces (changelog in §21).
 > **Market:** Pakistan (PKR, phone region +92).
 > **Stack:** Next.js + TypeScript on Vercel (later), Supabase Postgres, Upstash Redis + QStash (§18).
 > **Integrations:** REST API, WooCommerce plugin, Shopify app (§19).
@@ -559,6 +559,15 @@ erDiagram
 - `before` jsonb, `after` jsonb
 - `created_at`
 
+**VENDOR_APPLICATIONS** (sign-up requests from `/join`, §20.1)
+- `id` uuid PK
+- `legal_name`, `display_name`, `category`
+- `business_type` (`PVT_LTD|PARTNERSHIP|SOLE_PROPRIETOR`), `platform` (`API|WOOCOMMERCE|SHOPIFY`), `store_url` nullable
+- `contact_name`, `contact_email` (stored lowercase)
+- `ip_hash`: HMAC of the sender's IP with the phone pepper, only for rate limiting. The IP itself is never stored.
+- `status` (`NEW|REVIEWING|APPROVED|REJECTED`), `reviewer_note`, `reviewed_at`, `created_at`
+- Saving an application never creates a vendor, user or API key.
+
 **VENDOR_USERS** (people who log in to the vendor portal, §20.2)
 - `id` uuid PK, `vendor_id` FK
 - `auth_user_id` UNIQUE (Supabase Auth user)
@@ -988,7 +997,13 @@ All three live in the same Next.js app (`apps/web`) and the same deployment.
 | `/docs` | API overview: auth and signing, endpoints, error codes (§9) |
 | `/customers` | Plain-language notice for customers: what is stored, rights, how to dispute, grievance contact (§2) |
 | `/privacy` | Privacy policy. **Draft until counsel approves.** |
-| `/join` | Vendor sign-up: business details, contact, KYC level. Documents are uploaded after the first review. |
+| `/join` | Vendor sign-up: business details, contact, KYC level. Saved to `VENDOR_APPLICATIONS`. Documents are uploaded after the first review. |
+
+**`/join` spam limits:**
+- A hidden "honeypot" field. If a bot fills it, the form answers "received" but saves nothing.
+- At most **3 applications per email per 24 hours**, then "We already have your application".
+- At most **5 applications per IP per hour** (by IP hash), then "Too many applications".
+- New applications appear in `/admin/vendors`.
 | `/login` | Login for vendor staff and operators |
 
 - The public site never shows any customer data.
@@ -1122,3 +1137,11 @@ All three live in the same Next.js app (`apps/web`) and the same deployment.
 | 4 | Stateless signed cookie; disabling a user takes effect at expiry | §20.5, §17 |
 | 5 | API keys and Settings are OWNER only | §20.5 |
 | 6 | Login is off in production until Supabase Auth is connected | §20.5 |
+
+### v2.7 → v2.8 (vendor sign-up form)
+
+| # | Change | Where |
+|---|---|---|
+| 1 | `VENDOR_APPLICATIONS` table (migration 0004, with row level security) | §8.1 |
+| 2 | `/join` saves applications, with honeypot, per-email and per-IP limits | §20.1 |
+| 3 | Applications are listed in `/admin/vendors` | §20.3 |
