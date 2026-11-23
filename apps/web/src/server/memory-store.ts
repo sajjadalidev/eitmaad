@@ -3,6 +3,7 @@
 import { randomUUID } from "node:crypto";
 import { FAULT_CLASSES, sha256Hex, type TrustProfile, type VendorCustomerScore } from "@etimaad/core";
 import { toVendorEvent, vendorAuditRow, type VendorAuditRow } from "./vendor-audit";
+import { adminAuditValues, toAdminAuditRow } from "./admin-audit";
 import { applicationAuditRow, toApplicationEvent, type AuditRowValues } from "./application-audit";
 import { API_SCOPES } from "./store";
 import type { PortalUser } from "./users";
@@ -15,6 +16,10 @@ import type {
   ApplicationEvent,
   ApplicationMatches,
   ApprovedVendorInput,
+  AdminAuditEntry,
+  AdminAuditRow,
+  CustomerLookupCount,
+  CustomerRecord,
   FaultCounts,
   VendorApiKeyRow,
   VendorChange,
@@ -55,6 +60,8 @@ export class InMemoryStore implements EtimaadStore {
   >();
   readonly audit: (AuditRowValues & { id: string })[] = [];
   readonly vendorAudit: (VendorAuditRow & { id: string })[] = [];
+  readonly customers = new Map<string, CustomerRecord>();
+  readonly adminAudit: (ReturnType<typeof adminAuditValues> & { id: string })[] = [];
   // Stands in for dates the dev vendors do not have.
   readonly startedAt = new Date();
   readonly keyTimes = new Map<string, { createdAt: Date; revokedAt: Date | null }>();
@@ -308,6 +315,34 @@ export class InMemoryStore implements EtimaadStore {
     return "SAVED";
   }
 
+  async getCustomer(customerId: string): Promise<CustomerRecord | null> {
+    return this.customers.get(customerId) ?? null;
+  }
+
+  async listCustomerLookupCounts(customerId: string): Promise<CustomerLookupCount[]> {
+    const byVendor = new Map<string, CustomerLookupCount>();
+    for (const l of this.lookups) {
+      if (l.customerId !== customerId) continue;
+      const row = byVendor.get(l.vendorId) ?? { vendorId: l.vendorId, count: 0, lastAt: l.createdAt };
+      row.count++;
+      if (l.createdAt > row.lastAt) row.lastAt = l.createdAt;
+      byVendor.set(l.vendorId, row);
+    }
+    return [...byVendor.values()];
+  }
+
+  async recordAdminAudit(entry: AdminAuditEntry): Promise<void> {
+    this.adminAudit.push({ id: randomUUID(), ...adminAuditValues(entry) });
+  }
+
+  async listAdminAudit(entityType: string, entityId: string, limit: number): Promise<AdminAuditRow[]> {
+    return this.adminAudit
+      .filter((r) => r.entityType === entityType && r.entityId === entityId)
+      .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
+      .slice(0, limit)
+      .map((r) => toAdminAuditRow(r.id, r.action, r.after, r.createdAt));
+  }
+
   addVendor(vendor: VendorRecord): void {
     this.vendors.set(vendor.id, vendor);
   }
@@ -348,9 +383,10 @@ export class InMemoryStore implements EtimaadStore {
     return this.phones.get(phoneKey(phoneHash, keyVersion)) ?? null;
   }
 
-  async createCustomer(phoneHash: string, keyVersion: number) {
+  async createCustomer(phoneHash: string, keyVersion: number, now: Date = new Date()) {
     const id = randomUUID();
     this.phones.set(phoneKey(phoneHash, keyVersion), id);
+    this.customers.set(id, { id, status: "ACTIVE", createdAt: now, lastActivityAt: now });
     return id;
   }
 

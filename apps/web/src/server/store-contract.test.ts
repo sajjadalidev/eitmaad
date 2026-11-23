@@ -11,6 +11,7 @@ import { drizzle } from "drizzle-orm/pglite";
 import { describe, expect, it } from "vitest";
 import { APPROVAL_CHECKS, reviewApplication } from "./application-review";
 import { authenticate } from "./auth";
+import { findCustomerByPhone, loadCustomerDetail, recomputeForAdmin } from "./customer-detail";
 import { manageVendor } from "./vendor-management";
 import { ingestEvents } from "./ingest";
 import { InMemoryStore } from "./memory-store";
@@ -458,6 +459,43 @@ describe.each(HARNESSES)("%s", (_name, make) => {
       const since = new Date(NOW.getTime() - 30 * 86_400_000);
       expect(await store.countFaults(VENDOR_ID.a, since)).toMatchObject({ NONE: 1, USER: 1, LOGISTICS: 0 });
       expect(await store.countFaults(null, since)).toMatchObject({ NONE: 1, USER: 1, LOGISTICS: 1 });
+    });
+  });
+
+  it("finds a customer by phone and shows the detail with an audit trail", async () => {
+    await withHarness(make, async (store) => {
+      const phone = "03001515151";
+      await report(store, "a", [event({ phone }), refusal({ phone })]);
+      await report(store, "b", [refusal({ phone, reason_code: "RIDER_ISSUE" })]);
+      await check(store, "c", phone);
+      await check(store, "c", phone);
+      const admin = { id: "admin-1", name: "Admin", role: "ANALYST" };
+      const ctxs = { store, pepper: PEPPER, keyVersion: 1, now: NOW };
+
+      expect(await findCustomerByPhone(ctxs, admin, "12345")).toEqual({ status: "INVALID_PHONE" });
+      expect(await findCustomerByPhone(ctxs, admin, "03009090909")).toEqual({ status: "NOT_FOUND" });
+      const found = await findCustomerByPhone(ctxs, admin, "+92 300 1515151");
+      if (found.status !== "FOUND") throw new Error("Customer not found");
+
+      const detail = await loadCustomerDetail({ store, now: NOW }, admin, found.customerId);
+      expect(detail?.customer.id).toBe(found.customerId);
+      expect(detail?.profile?.totalNetworkOrders).toBe(3);
+      expect(detail?.orders).toHaveLength(3);
+      const byName = Object.fromEntries((detail?.stores ?? []).map((s) => [s.vendorName, s]));
+      expect(byName["Vendor a"]).toMatchObject({ orders: 2, lookups: 0 });
+      expect(byName["Vendor a"]?.score).toMatchObject({ delivered: 1, userFault: 1 });
+      expect(byName["Vendor b"]?.score).toMatchObject({ logisticsFault: 1 });
+      expect(byName["Vendor c"]).toMatchObject({ orders: 0, lookups: 2 });
+      expect(detail?.accessLog.map((a) => a.action)).toEqual(["CUSTOMER_VIEW"]);
+
+      expect(await recomputeForAdmin({ store, now: NOW }, admin, found.customerId)).toMatchObject({ status: "ERROR" });
+      const later = new Date(NOW.getTime() + 1000);
+      expect(await recomputeForAdmin({ store, now: later }, { ...admin, role: "SUPPORT" }, found.customerId)).toEqual({
+        status: "SAVED",
+      });
+      const log = await store.listAdminAudit("customer", found.customerId, 10);
+      expect(log.map((a) => a.action)).toEqual(["CUSTOMER_RECOMPUTE", "CUSTOMER_VIEW"]);
+      expect(await store.listAdminAudit("customer_search", "none", 10)).toHaveLength(1);
     });
   });
 

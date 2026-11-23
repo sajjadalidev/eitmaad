@@ -262,6 +262,40 @@ export interface VendorChange {
   now: Date;
 }
 
+// ---------- Customer detail in the admin console (blueprint section 20.3.3) ----------
+
+export interface CustomerRecord {
+  id: string;
+  status: "ACTIVE" | "UNDER_REVIEW" | "ARCHIVED";
+  createdAt: Date;
+  lastActivityAt: Date | null;
+}
+
+export interface CustomerLookupCount {
+  vendorId: string;
+  count: number;
+  lastAt: Date;
+}
+
+// A simple admin audit row (views, searches, manual actions).
+export interface AdminAuditEntry {
+  actorId: string;
+  actorName: string;
+  action: string;
+  entityType: string;
+  entityId: string;
+  note: string | null;
+  now: Date;
+}
+
+export interface AdminAuditRow {
+  id: string;
+  action: string;
+  actorName: string | null;
+  note: string | null;
+  createdAt: Date;
+}
+
 export interface AdminOverview {
   applicationsWaiting: number;
   disputesForReview: number;
@@ -314,6 +348,11 @@ export interface EtimaadStore {
   listVendorHistory(vendorId: string): Promise<VendorEvent[]>;
   // Saves the change and its audit row together. TERMINATE also revokes every active key.
   updateVendor(change: VendorChange): Promise<"SAVED" | "STALE">;
+
+  getCustomer(customerId: string): Promise<CustomerRecord | null>;
+  listCustomerLookupCounts(customerId: string): Promise<CustomerLookupCount[]>;
+  recordAdminAudit(entry: AdminAuditEntry): Promise<void>;
+  listAdminAudit(entityType: string, entityId: string, limit: number): Promise<AdminAuditRow[]>;
 
   // Maps a Supabase Auth user to an ADMIN_USERS or VENDOR_USERS row (admin wins if both exist).
   findPortalUserByAuthId(authUserId: string): Promise<PortalUser | null>;

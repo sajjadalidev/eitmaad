@@ -1,6 +1,6 @@
 # Etimaad: System Blueprint v2: Cross-Vendor Customer Trust & Fulfillment Scoring Engine (MVP)
 
-> **Status:** v2.11, 2026-11-23. It replaces the Gemini v1 blueprint and includes the v2 review fixes, the tech stack, the WooCommerce/Shopify connectors and the web surfaces (changelog in §21).
+> **Status:** v2.12, 2026-11-23. It replaces the Gemini v1 blueprint and includes the v2 review fixes, the tech stack, the WooCommerce/Shopify connectors and the web surfaces (changelog in §21).
 > **Market:** Pakistan (PKR, phone region +92).
 > **Stack:** Next.js + TypeScript on Vercel (later), Supabase Postgres, Upstash Redis + QStash (§18).
 > **Integrations:** REST API, WooCommerce plugin, Shopify app (§19).
@@ -1028,6 +1028,8 @@ All three live in the same Next.js app (`apps/web`) and the same deployment.
 | `/admin` | Overview: KYC queue, open disputes, anomaly alerts |
 | `/admin/vendors` | All vendors with 30-day activity, and the list of applications |
 | `/admin/applications/[id]` | Review one application: details, cross checks, decision, history |
+| `/admin/vendors/[id]` | One vendor's profile, data quality checks and actions (§20.3.2) |
+| `/admin/customers` | Find a customer by mobile number and see the detail (§20.3.3) |
 | `/admin/disputes` | Disputes routed to ADMIN; uphold or reject |
 | `/admin/scoring` | Read-only view of the active model parameters and reason codes |
 
@@ -1066,6 +1068,21 @@ Shows numbers (orders, risk checks, quota, disputes), profile and KYC, data qual
 - **Data quality checks:** customer-blame share of failed orders against the network (last 90 days, flagged when 15 points higher with 5+ failures), risk checks per reported order (flagged above 5), orders with reason OTHER, active keys and users.
 - Trust weight changes reach customer scores as each score is rebuilt (on the next order or within 7 days).
 - Every action is saved with an `AUDIT_LOG` row. If two admins act at once, only the first change is saved.
+
+#### 20.3.3 Customer detail (`/admin/customers`)
+
+| Item | Decision |
+|---|---|
+| Search | By mobile number. It is normalized and hashed on the server at once, never saved or logged. |
+| URL | The detail page URL holds only the customer id, never the phone number. |
+| Who | Every admin role can search and view. Rebuild score: ADMIN and SUPPORT. |
+| Audit | Every view, every rebuild and every search with no match is written to `AUDIT_LOG` with the admin's name. The page shows who viewed the customer. |
+
+The page shows:
+- Risk tier, exact score, orders, delivered and customer faults, number of stores.
+- **How the score was made:** good and bad evidence, orders that counted, enough data or not, rules that fired, and orders not counted (store fault, courier fault, no one's fault, unknown, disputed, daily cap, old pre-notice orders).
+- **By store:** orders, delivered, customer faults, store and courier faults, the store's own rate, and risk checks by that store.
+- **Orders:** every order with store, status, payment, value, reason code and whose fault.
 
 ### 20.4 Rules
 - **Login must be enforced before any deployment.** Until then the portal and console are local previews with no data.
@@ -1211,3 +1228,12 @@ Shows numbers (orders, risk checks, quota, disputes), profile and KYC, data qual
 | 1 | Admin vendor profile page with data quality checks | §20.3.2 |
 | 2 | Admin actions: make active, trust weight, restrict, lift, revoke key, terminate, notes | §20.3.2 |
 | 3 | No database change | |
+
+### v2.11 → v2.12 (customer detail)
+
+| # | Change | Where |
+|---|---|---|
+| 1 | Admin customer search by mobile number, hashed at once | §20.3.3 |
+| 2 | Customer detail: score breakdown, rules, exclusions, by store, orders, view log | §20.3.3 |
+| 3 | Manual score rebuild for ADMIN and SUPPORT | §20.3.3 |
+| 4 | No database change | |

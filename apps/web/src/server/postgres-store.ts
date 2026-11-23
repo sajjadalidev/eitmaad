@@ -19,6 +19,7 @@ import {
 } from "@etimaad/db";
 import { FAULT_CLASSES, vendorCanUseApi } from "@etimaad/core";
 import { VENDOR_ENTITY, toVendorEvent, vendorAuditRow } from "./vendor-audit";
+import { adminAuditValues, toAdminAuditRow } from "./admin-audit";
 import type { PortalUser } from "./users";
 import type { ScoreBreakdown, TrustProfile, VendorCustomerScore } from "@etimaad/core";
 import { and, count, desc, eq, gte, ilike, inArray, ne, or, sql } from "drizzle-orm";
@@ -34,6 +35,10 @@ import type {
   ApplicationEvent,
   ApplicationMatches,
   ApprovedVendorInput,
+  AdminAuditEntry,
+  AdminAuditRow,
+  CustomerLookupCount,
+  CustomerRecord,
   FaultCounts,
   VendorApiKeyRow,
   VendorChange,
@@ -395,6 +400,38 @@ export class PostgresStore implements EtimaadStore {
       if (error instanceof StaleChange) return "STALE" as const;
       throw error;
     });
+  }
+
+  async getCustomer(customerId: string): Promise<CustomerRecord | null> {
+    const [row] = await this.db.select().from(customers).where(eq(customers.id, customerId)).limit(1);
+    return row ? { id: row.id, status: row.status, createdAt: row.createdAt, lastActivityAt: row.lastActivityAt } : null;
+  }
+
+  async listCustomerLookupCounts(customerId: string): Promise<CustomerLookupCount[]> {
+    const rows = await this.db
+      .select({
+        vendorId: lookupAuditLog.vendorId,
+        count: count(),
+        lastAt: sql<Date>`max(${lookupAuditLog.createdAt})`.mapWith(lookupAuditLog.createdAt),
+      })
+      .from(lookupAuditLog)
+      .where(eq(lookupAuditLog.customerId, customerId))
+      .groupBy(lookupAuditLog.vendorId);
+    return rows;
+  }
+
+  async recordAdminAudit(entry: AdminAuditEntry): Promise<void> {
+    await this.db.insert(auditLog).values(adminAuditValues(entry));
+  }
+
+  async listAdminAudit(entityType: string, entityId: string, limit: number): Promise<AdminAuditRow[]> {
+    const rows = await this.db
+      .select()
+      .from(auditLog)
+      .where(and(eq(auditLog.entityType, entityType), eq(auditLog.entityId, entityId)))
+      .orderBy(desc(auditLog.createdAt))
+      .limit(limit);
+    return rows.map((r) => toAdminAuditRow(r.id, r.action, r.after, r.createdAt));
   }
 
   async findPortalUserByAuthId(authUserId: string): Promise<PortalUser | null> {
