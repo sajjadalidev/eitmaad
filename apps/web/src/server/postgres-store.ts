@@ -1,6 +1,7 @@
 // Postgres store for the API (blueprint sections 3.4, 6.7, 8.1). Works with any Drizzle Postgres driver.
 
 import {
+  adminUsers,
   apiKeys,
   customerIdentifiers,
   customers,
@@ -11,8 +12,11 @@ import {
   orders,
   vendorApplications,
   vendorCustomerScores,
+  vendorUsers,
   vendors,
 } from "@etimaad/db";
+import { vendorCanUseApi } from "@etimaad/core";
+import type { PortalUser } from "./users";
 import type { ScoreBreakdown, TrustProfile, VendorCustomerScore } from "@etimaad/core";
 import { and, count, desc, eq, gte, inArray, sql } from "drizzle-orm";
 import type { PgDatabase } from "drizzle-orm/pg-core";
@@ -116,6 +120,40 @@ export class PostgresStore implements EtimaadStore {
     private readonly db: AnyPgDatabase,
     private readonly options: PostgresStoreOptions,
   ) {}
+
+  async findPortalUserByAuthId(authUserId: string): Promise<PortalUser | null> {
+    const [admin] = await this.db.select().from(adminUsers).where(eq(adminUsers.authUserId, authUserId)).limit(1);
+    if (admin) {
+      return {
+        id: admin.id,
+        email: admin.workEmail,
+        name: admin.name,
+        kind: "admin",
+        role: admin.role,
+        vendorId: null,
+        status: admin.status,
+      };
+    }
+
+    const [row] = await this.db
+      .select({ user: vendorUsers, vendorStatus: vendors.status })
+      .from(vendorUsers)
+      .innerJoin(vendors, eq(vendors.id, vendorUsers.vendorId))
+      .where(eq(vendorUsers.authUserId, authUserId))
+      .limit(1);
+    if (!row) return null;
+    // A pending vendor may still log in (for example to finish KYC); a terminated vendor may not.
+    const vendorOpen = row.vendorStatus === "PENDING_VERIFICATION" || vendorCanUseApi(row.vendorStatus);
+    return {
+      id: row.user.id,
+      email: row.user.email,
+      name: row.user.name,
+      kind: "vendor",
+      role: row.user.role,
+      vendorId: row.user.vendorId,
+      status: row.user.status === "ACTIVE" && vendorOpen ? "ACTIVE" : "DISABLED",
+    };
+  }
 
   async saveApplication(a: VendorApplicationRecord): Promise<void> {
     await this.db.insert(vendorApplications).values({

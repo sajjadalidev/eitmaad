@@ -15,6 +15,7 @@ import type {
   VendorCustomerScore,
   VendorStatus,
 } from "@etimaad/core";
+import type { PortalUser } from "./users";
 
 export const API_SCOPES = ["events:write", "batches:write", "risk:read", "disputes:write"] as const;
 export type ApiScope = (typeof API_SCOPES)[number];
@@ -116,6 +117,9 @@ export interface VendorApplicationRecord {
 }
 
 export interface EtimaadStore {
+  // Maps a Supabase Auth user to an ADMIN_USERS or VENDOR_USERS row (admin wins if both exist).
+  findPortalUserByAuthId(authUserId: string): Promise<PortalUser | null>;
+
   saveApplication(application: VendorApplicationRecord): Promise<void>;
   // Counts applications since a time, by email or by IP hash (for spam limits).
   countApplicationsSince(filter: { contactEmail?: string; ipHash?: string }, since: Date): Promise<number>;

@@ -10,11 +10,13 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "demo": "node scripts/demo.mjs",
-    "create-vendor": "tsx scripts/create-vendor.ts"
+    "create-vendor": "tsx scripts/create-vendor.ts",
+    "link-user": "tsx scripts/link-user.ts"
   },
   "dependencies": {
     "@etimaad/core": "workspace:*",
     "@etimaad/db": "workspace:*",
+    "@supabase/supabase-js": "^2.119.2",
     "drizzle-orm": "0.45.4",
     "next": "^16.4.6",
     "react": "^19.3.1",

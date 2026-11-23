@@ -2,6 +2,7 @@
 
 import { randomUUID } from "node:crypto";
 import type { TrustProfile, VendorCustomerScore } from "@etimaad/core";
+import type { PortalUser } from "./users";
 import type {
   ApiKeyRecord,
   EtimaadStore,
@@ -28,6 +29,11 @@ export class InMemoryStore implements EtimaadStore {
   readonly vendorScores = new Map<string, VendorCustomerScore>();
   readonly lookups: LookupRecord[] = [];
   readonly applications: VendorApplicationRecord[] = [];
+  readonly portalUsers = new Map<string, PortalUser>();
+
+  async findPortalUserByAuthId(authUserId: string) {
+    return this.portalUsers.get(authUserId) ?? null;
+  }
 
   async saveApplication(application: VendorApplicationRecord) {
     this.applications.push({ ...application });

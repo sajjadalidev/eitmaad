@@ -52,7 +52,18 @@ the migrations and the reference data (reason codes, scoring model v1) before th
 - `/vendor/*` and `/admin/*` need a login. `src/proxy.ts` checks the session cookie, and each portal layout checks again.
 - Local accounts (vendor owner, vendor staff, admin) and the shared dev password are in `apps/web/src/server/dev-credentials.json`.
 - Only the vendor owner can open API keys and Settings.
-- In production, login stays off until Supabase Auth is connected and `SESSION_SECRET` is set.
+- In production, Supabase Auth checks the email and password. The user must also be linked in `admin_users` or `vendor_users`.
+- Production needs `SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY` and `SESSION_SECRET`. Without them the login page says it is not available.
+- Locally, set `ETIMAAD_AUTH=supabase` to try Supabase login instead of the dev accounts.
+
+### Add a portal user (production)
+
+1. Supabase: Authentication > Users > Add user (email and password). Etimaad never sees the password.
+2. Link the user (writes to the database, needs approval):
+
+```bash
+DATABASE_MIGRATION_URL=... pnpm --filter @etimaad/web link-user --kind admin --email you@company.pk --name "Your Name" --role ADMIN --yes
+```
 
 ## Rules
 

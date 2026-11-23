@@ -1,6 +1,6 @@
 # Etimaad: System Blueprint v2: Cross-Vendor Customer Trust & Fulfillment Scoring Engine (MVP)
 
-> **Status:** v2.8, 2026-11-23. It replaces the Gemini v1 blueprint and includes the v2 review fixes, the tech stack, the WooCommerce/Shopify connectors and the web surfaces (changelog in §21).
+> **Status:** v2.9, 2026-11-23. It replaces the Gemini v1 blueprint and includes the v2 review fixes, the tech stack, the WooCommerce/Shopify connectors and the web surfaces (changelog in §21).
 > **Market:** Pakistan (PKR, phone region +92).
 > **Stack:** Next.js + TypeScript on Vercel (later), Supabase Postgres, Upstash Redis + QStash (§18).
 > **Integrations:** REST API, WooCommerce plugin, Shopify app (§19).
@@ -838,7 +838,7 @@ Scheduled jobs:
 12. Counsel to confirm the **erasure limits** (§2) and the **backfill consent** rule (§3.5).
 13. **Privacy policy and customer notice text** (§20.1): the current pages are drafts. Counsel must write or approve the final text.
 14. **Public contact details:** support email, grievance contact name and phone for the public site.
-15. **Supabase project for login** (§20.5): login method (link or password), admin MFA, and whether a disabled user must be logged out at once (needs a server-side session list).
+15. **Login follow-ups** (§20.5): admin MFA, and whether a disabled user must be logged out at once (needs a server-side session list). Login method is decided: email + password through Supabase Auth.
 
 ---
 
@@ -1037,12 +1037,15 @@ All three live in the same Next.js app (`apps/web`) and the same deployment.
 
 | Item | Decision |
 |---|---|
-| Local login | Email + password with dev accounts. The final method (login link or password) is chosen with Supabase Auth. |
+| Local login | Email + password with dev accounts (`ETIMAAD_AUTH=supabase` switches to Supabase) |
+| Production login | Email + password checked by **Supabase Auth**. The Supabase user must be linked to an `ADMIN_USERS` or `VENDOR_USERS` row by `auth_user_id`; otherwise login fails with the same "wrong email or password" message. The Supabase session is ended right away; Etimaad keeps only its own signed cookie. |
+| Vendor status | Users of a `TERMINATED` vendor cannot log in. `PENDING_VERIFICATION` vendors can (for example to finish KYC). |
+| Adding users | Created in Supabase (Authentication > Users), then linked with the `link-user` script. Etimaad never handles passwords. Public sign-up in Supabase should be off. |
 | Session | Signed `httpOnly` cookie, valid for **12 hours** |
 | Rate limit | **5 failed attempts per email in 15 minutes**, then blocked until the window passes |
 | Session storage | Stateless: all session data is in the signed cookie. Disabling a user takes effect when the cookie expires (up to 12 hours). |
 | Vendor roles | API keys and Settings pages are **OWNER only**; STAFF sees a message |
-| Production | Login stays **off** until Supabase Auth is connected and `SESSION_SECRET` is set |
+| Production settings | Login is **off** until `SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY` and `SESSION_SECRET` are set |
 
 - Two checks protect every portal page: the proxy (`src/proxy.ts`) and the portal layout.
 - After login, the user is sent back only to a page in their own area. Other targets go to the area home.
@@ -1145,3 +1148,12 @@ All three live in the same Next.js app (`apps/web`) and the same deployment.
 | 1 | `VENDOR_APPLICATIONS` table (migration 0004, with row level security) | §8.1 |
 | 2 | `/join` saves applications, with honeypot, per-email and per-IP limits | §20.1 |
 | 3 | Applications are listed in `/admin/vendors` | §20.3 |
+
+### v2.8 → v2.9 (Supabase login)
+
+| # | Change | Where |
+|---|---|---|
+| 1 | Production login uses Supabase Auth for the password check | §20.5 |
+| 2 | Supabase users are linked to admin or vendor users by `auth_user_id` | §20.5, §8.1 |
+| 3 | Users of terminated vendors cannot log in | §20.5 |
+| 4 | Admin MFA is still open | §17 |

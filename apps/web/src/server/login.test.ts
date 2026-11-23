@@ -2,12 +2,12 @@ import { describe, expect, it } from "vitest";
 import { LoginRateLimiter, attemptLogin, safeNextPath, sessionFor } from "./login";
 import { hashPassword, verifyPassword } from "./passwords";
 import { signSession, verifySession, type SessionPayload } from "./session";
-import { InMemoryUserDirectory, type PortalUser } from "./users";
+import { DevAuthenticator, SupabaseAuthenticator, type DevUser, type PortalUser } from "./users";
 
 const NOW = new Date("2026-11-20T12:00:00Z");
 const SECRET = "test-session-secret-0123456789-abcdef";
 
-const owner: PortalUser = {
+const owner: DevUser = {
   id: "u1",
   email: "owner@shop.test",
   name: "Owner",
@@ -18,9 +18,55 @@ const owner: PortalUser = {
   status: "ACTIVE",
 };
 
-function deps(users: PortalUser[] = [owner], limiter = new LoginRateLimiter()) {
-  return { directory: new InMemoryUserDirectory(users), limiter, now: NOW };
+function deps(users: DevUser[] = [owner], limiter = new LoginRateLimiter()) {
+  return { authenticator: new DevAuthenticator(users), limiter, now: NOW };
 }
+
+describe("SupabaseAuthenticator", () => {
+  const portalUser: PortalUser = {
+    id: "admin-1",
+    email: "admin@etimaad.pk",
+    name: "Admin",
+    kind: "admin",
+    role: "ADMIN",
+    vendorId: null,
+    status: "ACTIVE",
+  };
+  const signIn = async (email: string, password: string) =>
+    email === "admin@etimaad.pk" && password === "right" ? { authUserId: "auth-1" } : null;
+  const lookup = (users: Record<string, PortalUser>) => ({
+    findPortalUserByAuthId: async (id: string) => users[id] ?? null,
+  });
+
+  it("returns the mapped user for a correct password", async () => {
+    const auth = new SupabaseAuthenticator(signIn, lookup({ "auth-1": portalUser }));
+    expect(await auth.verify("admin@etimaad.pk", "right")).toEqual(portalUser);
+  });
+
+  it("rejects a wrong password", async () => {
+    const auth = new SupabaseAuthenticator(signIn, lookup({ "auth-1": portalUser }));
+    expect(await auth.verify("admin@etimaad.pk", "wrong")).toBeNull();
+  });
+
+  it("rejects a Supabase user that is not an admin or vendor user", async () => {
+    const auth = new SupabaseAuthenticator(signIn, lookup({}));
+    expect(await auth.verify("admin@etimaad.pk", "right")).toBeNull();
+  });
+
+  it("rejects a disabled user", async () => {
+    const auth = new SupabaseAuthenticator(signIn, lookup({ "auth-1": { ...portalUser, status: "DISABLED" } }));
+    expect(await auth.verify("admin@etimaad.pk", "right")).toBeNull();
+  });
+
+  it("works through attemptLogin", async () => {
+    const auth = new SupabaseAuthenticator(signIn, lookup({ "auth-1": portalUser }));
+    const r = await attemptLogin(
+      { email: "Admin@Etimaad.pk", password: "right" },
+      { authenticator: auth, limiter: new LoginRateLimiter(), now: NOW },
+    );
+    expect(r.ok && r.value.kind).toBe("admin");
+  });
+});
 
 describe("passwords", () => {
   it("verifies only the right password", () => {
@@ -35,6 +81,7 @@ describe("attemptLogin", () => {
   it("logs in with the right password, any email case", async () => {
     const r = await attemptLogin({ email: " Owner@Shop.test ", password: "right-password" }, deps());
     expect(r.ok && r.value.id).toBe("u1");
+    expect(r.ok && "passwordHash" in r.value).toBe(false);
   });
 
   it("gives the same error for a wrong password and an unknown email", async () => {
@@ -70,7 +117,8 @@ describe("attemptLogin", () => {
 });
 
 describe("session cookie", () => {
-  const payload: SessionPayload = sessionFor(owner, NOW);
+  const { passwordHash: _hash, ...ownerUser } = owner;
+  const payload: SessionPayload = sessionFor(ownerUser, NOW);
 
   it("round-trips a valid session", async () => {
     const token = await signSession(payload, SECRET);

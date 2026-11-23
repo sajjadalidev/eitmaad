@@ -72,5 +72,7 @@ export function configSummary() {
     phonePepper: envValue("PHONE_PEPPER_V1").length >= MIN_SECRET_LENGTH,
     signingKey: signingKey.length >= MIN_SECRET_LENGTH,
     signingKeyFingerprint: signingKey.length >= MIN_SECRET_LENGTH ? fingerprint(signingKey) : null,
+    supabaseAuth: envValue("SUPABASE_URL") !== "" && envValue("SUPABASE_PUBLISHABLE_KEY") !== "",
+    sessionSecret: envValue("SESSION_SECRET").length >= MIN_SECRET_LENGTH,
   };
 }

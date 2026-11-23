@@ -2,9 +2,8 @@
 
 import { z } from "zod";
 import { err, ok, type Result } from "@etimaad/core";
-import { hashPassword, verifyPassword } from "./passwords";
 import { SESSION_TTL_SECONDS, homeFor, type SessionKind, type SessionPayload } from "./session";
-import type { PortalUser, UserDirectory } from "./users";
+import type { Authenticator, PortalUser } from "./users";
 
 export type LoginError = "INVALID_INPUT" | "INVALID_CREDENTIALS" | "TOO_MANY_ATTEMPTS";
 
@@ -48,12 +47,9 @@ export class LoginRateLimiter {
   }
 }
 
-// Used when the email is unknown, so the response time does not reveal which emails exist.
-let dummyHash: string | null = null;
-
 export async function attemptLogin(
   input: { email: unknown; password: unknown },
-  deps: { directory: UserDirectory; limiter: LoginRateLimiter; now: Date },
+  deps: { authenticator: Authenticator; limiter: LoginRateLimiter; now: Date },
 ): Promise<Result<PortalUser, LoginError>> {
   const parsed = loginSchema.safeParse(input);
   if (!parsed.success) return err("INVALID_INPUT");
@@ -61,11 +57,8 @@ export async function attemptLogin(
 
   if (deps.limiter.isBlocked(email, deps.now)) return err("TOO_MANY_ATTEMPTS");
 
-  const user = await deps.directory.findByEmail(email);
-  dummyHash ??= hashPassword("not-a-real-password");
-  const passwordOk = verifyPassword(password, user?.passwordHash ?? dummyHash);
-
-  if (!user || !passwordOk || user.status !== "ACTIVE") {
+  const user = await deps.authenticator.verify(email, password);
+  if (!user) {
     deps.limiter.recordFailure(email, deps.now);
     return err("INVALID_CREDENTIALS");
   }
