@@ -48,7 +48,8 @@ function hmacKey(secret: string, usage: "sign" | "verify"): Promise<CryptoKey> {
 
 // Production needs SESSION_SECRET. Development falls back to the dev secret.
 export function getSessionSecret(): string | null {
-  const fromEnv = process.env.SESSION_SECRET;
+  // Trimmed: values pasted into a hosting dashboard often carry a hidden newline.
+  const fromEnv = (process.env.SESSION_SECRET ?? "").trim().replace(/^["']|["']$/g, "");
   if (fromEnv && fromEnv.length >= MIN_SECRET_LENGTH) return fromEnv;
   if (process.env.NODE_ENV === "production") return null;
   return credentials.sessionSecret;

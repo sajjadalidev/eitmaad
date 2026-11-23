@@ -6,6 +6,7 @@
 
 import { createDb } from "@etimaad/db";
 import { DEV_PEPPER, createDevStore } from "./dev-store";
+import { envValue, fingerprint } from "./env";
 import { ApiError } from "./http";
 import type { InMemoryStore } from "./memory-store";
 import { PostgresStore } from "./postgres-store";
@@ -34,12 +35,12 @@ function usePostgres(): boolean {
 }
 
 function postgresRuntime(): ApiRuntime {
-  const url = process.env.DATABASE_URL;
-  const pepper = process.env.PHONE_PEPPER_V1 ?? "";
+  const url = envValue("DATABASE_URL");
+  const pepper = envValue("PHONE_PEPPER_V1");
   if (!url) unavailable("Database is not configured.");
   if (pepper.length < MIN_SECRET_LENGTH) unavailable("Phone pepper is not configured.");
 
-  const signingKey = process.env.SIGNING_SECRET_KEY ?? "";
+  const signingKey = envValue("SIGNING_SECRET_KEY");
   globalCache.etimaadPostgresStore ??= new PostgresStore(createDb(url), {
     signingKey: signingKey.length >= MIN_SECRET_LENGTH ? signingKey : null,
   });
@@ -56,7 +57,20 @@ export function getRuntime(): ApiRuntime {
   globalCache.etimaadDevStore ??= createDevStore();
   return {
     store: globalCache.etimaadDevStore,
-    pepper: process.env.PHONE_PEPPER_V1 || DEV_PEPPER,
+    pepper: envValue("PHONE_PEPPER_V1") || DEV_PEPPER,
     keyVersion: Number(process.env.PHONE_PEPPER_ACTIVE_VERSION || 1),
+  };
+}
+
+// Safe summary of the setup for /v1/health. Shows only whether values are set,
+// plus a one-way fingerprint of the signing key so two copies can be compared.
+export function configSummary() {
+  const signingKey = envValue("SIGNING_SECRET_KEY");
+  return {
+    store: usePostgres() ? "postgres" : "memory",
+    database: envValue("DATABASE_URL") !== "",
+    phonePepper: envValue("PHONE_PEPPER_V1").length >= MIN_SECRET_LENGTH,
+    signingKey: signingKey.length >= MIN_SECRET_LENGTH,
+    signingKeyFingerprint: signingKey.length >= MIN_SECRET_LENGTH ? fingerprint(signingKey) : null,
   };
 }

@@ -6,6 +6,9 @@ coverage/
 *.tsbuildinfo
 next-env.d.ts
 
+# Generated API keys and signing secrets.
+.secrets/
+
 # Local env files. Only .env.example is committed.
 .env
 .env.*
