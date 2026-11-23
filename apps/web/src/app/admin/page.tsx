@@ -1,12 +1,13 @@
 import Link from "next/link";
 import { getRuntime } from "@/server/config";
+import { readWithRetry } from "@/server/retry";
 import type { AdminOverview } from "@/server/store";
 
 export const dynamic = "force-dynamic";
 
 async function loadOverview(): Promise<AdminOverview | null> {
   try {
-    return await getRuntime().store.adminOverview();
+    return await readWithRetry(() => getRuntime().store.adminOverview());
   } catch {
     return null;
   }

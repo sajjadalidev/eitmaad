@@ -3,6 +3,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { DataTable } from "@/components/data-table";
 import { getRuntime } from "@/server/config";
+import { readWithRetry } from "@/server/retry";
 import { requireSession } from "@/server/require-session";
 import type { VendorSummary } from "@/server/store";
 import { VENDOR_STATUS_LABEL } from "@/server/vendor-management";
@@ -16,7 +17,7 @@ const day = (d: Date | null) => (d ? d.toISOString().slice(0, 10) : "-");
 
 async function loadVendors(): Promise<VendorSummary[] | null> {
   try {
-    return await getRuntime().store.listVendorSummaries(new Date(Date.now() - 30 * DAY_MS));
+    return await readWithRetry(() => getRuntime().store.listVendorSummaries(new Date(Date.now() - 30 * DAY_MS)));
   } catch {
     return null;
   }

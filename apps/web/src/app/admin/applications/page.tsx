@@ -3,6 +3,7 @@ import Link from "next/link";
 import { DataTable } from "@/components/data-table";
 import { APPLICATION_STATUS_LABEL, APPROVAL_CHECKS } from "@/server/application-review";
 import { getRuntime } from "@/server/config";
+import { readWithRetry } from "@/server/retry";
 import { requireSession } from "@/server/require-session";
 import { APPLICATION_STATUSES, type AdminOverview, type ApplicationStatus, type VendorApplicationRecord } from "@/server/store";
 
@@ -43,7 +44,9 @@ async function load(status: ApplicationStatus | undefined): Promise<{
 } | null> {
   try {
     const { store } = getRuntime();
-    const [list, overview] = await Promise.all([store.listApplications(200, status), store.adminOverview()]);
+    const [list, overview] = await readWithRetry(() =>
+      Promise.all([store.listApplications(200, status), store.adminOverview()]),
+    );
     return { list, counts: overview.applications };
   } catch {
     return null;
