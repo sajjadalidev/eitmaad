@@ -277,8 +277,27 @@ export interface CustomerLookupCount {
   lastAt: Date;
 }
 
-// A simple admin audit row (views, searches, manual actions).
+// ---------- Vendor self-service (blueprint section 20.2.1) ----------
+
+export interface AgreementRecord {
+  vendorId: string;
+  agreementVersion: string;
+  signedByName: string;
+  signedAt: Date;
+  documentChecksum: string;
+}
+
+export interface NewVendorUser {
+  vendorId: string;
+  authUserId: string;
+  email: string;
+  name: string;
+  role: "OWNER" | "STAFF";
+}
+
+// A simple audit row (views, searches, manual actions) by an admin or a vendor user.
 export interface AdminAuditEntry {
+  actorType?: "ADMIN" | "VENDOR";
   actorId: string;
   actorName: string;
   action: string;
@@ -357,6 +376,18 @@ export interface EtimaadStore {
   getCustomer(customerId: string): Promise<CustomerRecord | null>;
   listCustomerLookupCounts(customerId: string): Promise<CustomerLookupCount[]>;
   recordAdminAudit(entry: AdminAuditEntry): Promise<void>;
+
+  // Creates the vendor user, or links an existing row with the same email. Returns the row id.
+  linkVendorUser(user: NewVendorUser): Promise<string>;
+  setVendorUserStatus(vendorId: string, userId: string, status: "ACTIVE" | "DISABLED"): Promise<boolean>;
+  // The Supabase Auth user id for an email, if that login exists.
+  findAuthUserIdByEmail(email: string): Promise<string | null>;
+  getAgreement(vendorId: string): Promise<AgreementRecord | null>;
+  saveAgreement(agreement: AgreementRecord): Promise<void>;
+  // Seals the signing secret and stores only the key hash. Returns the key id.
+  addVendorApiKey(vendorId: string, credentials: { keyPrefix: string; apiKey: string; signingSecret: string }, now: Date): Promise<string>;
+  revokeVendorApiKey(vendorId: string, keyId: string, now: Date): Promise<boolean>;
+  saveVendorSettings(vendorId: string, settings: Record<string, unknown>, now: Date): Promise<void>;
   listAdminAudit(entityType: string, entityId: string, limit: number): Promise<AdminAuditRow[]>;
 
   // Maps a Supabase Auth user to an ADMIN_USERS or VENDOR_USERS row (admin wins if both exist).

@@ -32,5 +32,18 @@ export function createDevStore(): InMemoryStore {
       v.signingSecret,
     );
   }
+  // Dev vendor users, so the Team pages list them. They log in through dev-credentials.json.
+  for (const u of credentials.users) {
+    if (u.kind !== "vendor" || !u.vendorId) continue;
+    store.portalUsers.set(`dev-auth-${u.id}`, {
+      id: u.id,
+      email: u.email,
+      name: u.name,
+      kind: "vendor",
+      role: u.role,
+      vendorId: u.vendorId,
+      status: "ACTIVE",
+    });
+  }
   return store;
 }

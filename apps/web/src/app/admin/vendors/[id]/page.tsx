@@ -12,6 +12,7 @@ import {
   allowedVendorActions,
   trustRange,
 } from "@/server/vendor-management";
+import { UsersPanel } from "./users-panel";
 import { VendorPanel } from "./vendor-panel";
 
 export const dynamic = "force-dynamic";
@@ -190,10 +191,18 @@ export default async function VendorProfilePage({ params }: { params: Promise<{ 
       />
 
       <h2>Portal users</h2>
-      <DataTable
-        columns={["Name", "Email", "Role", "Status", "Login linked", "Last login"]}
-        rows={users.map((u) => [u.name, u.email, u.role, u.status, u.linked ? "Yes" : "No", when(u.lastLoginAt)])}
-        emptyMessage="No portal users yet. Add the user in Supabase, then link with the link-user script."
+      <UsersPanel
+        vendorId={vendor.id}
+        canManage={(session.role === "ADMIN" || session.role === "SUPPORT") && vendor.status !== "TERMINATED"}
+        users={users.map((u) => ({
+          id: u.id,
+          name: u.name,
+          email: u.email,
+          role: u.role,
+          status: u.status,
+          linked: u.linked,
+          lastLogin: when(u.lastLoginAt),
+        }))}
       />
 
       <h2>Recent orders</h2>

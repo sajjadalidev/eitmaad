@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useActionState } from "react";
 import { loginAction, type LoginState } from "@/server/auth-actions";
 
@@ -28,6 +29,9 @@ export function LoginForm({ next, devHint }: { next: string; devHint: boolean })
       <button type="submit" className="btn btn-primary" disabled={pending}>
         {pending ? "Logging in..." : "Log in"}
       </button>
+      <p className="small">
+        <Link href="/forgot-password">Forgot password?</Link>
+      </p>
       {devHint && (
         <p className="muted small">
           Local development: use the accounts in <code>apps/web/src/server/dev-credentials.json</code>.

@@ -4,6 +4,7 @@ import {
   adminUsers,
   apiKeys,
   auditLog,
+  dataSharingAgreements,
   customerIdentifiers,
   customers,
   customerTrustProfiles,
@@ -17,8 +18,10 @@ import {
   vendorUsers,
   vendors,
 } from "@etimaad/db";
-import { FAULT_CLASSES, VENDOR_STATUSES, vendorCanUseApi } from "@etimaad/core";
-import { APPLICATION_STATUSES, type ApplicationStatus } from "./store";
+import { FAULT_CLASSES, VENDOR_STATUSES, sha256Hex, vendorCanUseApi } from "@etimaad/core";
+import { linkPortalUser } from "./portal-user-admin";
+import { sealSecret } from "./secret-box";
+import { API_SCOPES, APPLICATION_STATUSES, type AgreementRecord, type ApplicationStatus, type NewVendorUser } from "./store";
 import { VENDOR_ENTITY, toVendorEvent, vendorAuditRow } from "./vendor-audit";
 import { adminAuditValues, toAdminAuditRow } from "./admin-audit";
 import type { PortalUser } from "./users";
@@ -445,6 +448,85 @@ export class PostgresStore implements EtimaadStore {
       .orderBy(desc(auditLog.createdAt))
       .limit(limit);
     return rows.map((r) => toAdminAuditRow(r.id, r.action, r.after, r.createdAt));
+  }
+
+  async linkVendorUser(user: NewVendorUser): Promise<string> {
+    return linkPortalUser(this.db, { kind: "vendor", ...user }, user.authUserId);
+  }
+
+  async setVendorUserStatus(vendorId: string, userId: string, status: "ACTIVE" | "DISABLED"): Promise<boolean> {
+    const rows = await this.db
+      .update(vendorUsers)
+      .set({ status })
+      .where(and(eq(vendorUsers.id, userId), eq(vendorUsers.vendorId, vendorId)))
+      .returning({ id: vendorUsers.id });
+    return rows.length > 0;
+  }
+
+  async findAuthUserIdByEmail(email: string): Promise<string | null> {
+    // Supabase keeps logins in auth.users. Only the id is read.
+    const rows = await this.db.execute<{ id: string }>(
+      sql`select id from auth.users where lower(email) = lower(${email.trim()}) limit 1`,
+    );
+    const list = Array.isArray(rows) ? rows : ((rows as { rows?: { id: string }[] }).rows ?? []);
+    return list[0]?.id ?? null;
+  }
+
+  async getAgreement(vendorId: string): Promise<AgreementRecord | null> {
+    const [row] = await this.db
+      .select()
+      .from(dataSharingAgreements)
+      .where(eq(dataSharingAgreements.vendorId, vendorId))
+      .orderBy(desc(dataSharingAgreements.signedAt))
+      .limit(1);
+    return row
+      ? {
+          vendorId: row.vendorId,
+          agreementVersion: row.agreementVersion,
+          signedByName: row.signedByName,
+          signedAt: row.signedAt,
+          documentChecksum: row.documentChecksum,
+        }
+      : null;
+  }
+
+  async saveAgreement(a: AgreementRecord): Promise<void> {
+    await this.db.insert(dataSharingAgreements).values(a);
+  }
+
+  async addVendorApiKey(
+    vendorId: string,
+    credentials: { keyPrefix: string; apiKey: string; signingSecret: string },
+    now: Date,
+  ): Promise<string> {
+    const signingKey = this.options.signingKey;
+    if (!signingKey) throw new Error("SIGNING_SECRET_KEY is not set, so API keys cannot be created.");
+    const [row] = await this.db
+      .insert(apiKeys)
+      .values({
+        vendorId,
+        keyPrefix: credentials.keyPrefix,
+        keyHash: sha256Hex(credentials.apiKey),
+        scopes: [...API_SCOPES],
+        signingSecretRef: sealSecret(credentials.signingSecret, signingKey),
+        createdAt: now,
+      })
+      .returning({ id: apiKeys.id });
+    if (!row) throw new Error("API key insert returned no row");
+    return row.id;
+  }
+
+  async revokeVendorApiKey(vendorId: string, keyId: string, now: Date): Promise<boolean> {
+    const rows = await this.db
+      .update(apiKeys)
+      .set({ status: "REVOKED", revokedAt: now })
+      .where(and(eq(apiKeys.id, keyId), eq(apiKeys.vendorId, vendorId), eq(apiKeys.status, "ACTIVE")))
+      .returning({ id: apiKeys.id });
+    return rows.length > 0;
+  }
+
+  async saveVendorSettings(vendorId: string, settings: Record<string, unknown>, now: Date): Promise<void> {
+    await this.db.update(vendors).set({ settings, updatedAt: now }).where(eq(vendors.id, vendorId));
   }
 
   async findPortalUserByAuthId(authUserId: string): Promise<PortalUser | null> {

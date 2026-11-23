@@ -1,6 +1,7 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useActionState, useMemo, useState } from "react";
+import { saveSettingsAction, type FormState } from "../self-service-actions";
 import {
   DEFAULT_VENDOR_SETTINGS,
   parseVendorSettings,
@@ -44,9 +45,12 @@ function ActionSelect({
   );
 }
 
-export function SettingsEditor() {
-  const [settings, setSettings] = useState<VendorSettings>(DEFAULT_VENDOR_SETTINGS);
+const INITIAL: FormState = { status: "IDLE", message: null };
+
+export function SettingsEditor({ initial }: { initial: VendorSettings }) {
+  const [settings, setSettings] = useState<VendorSettings>(initial);
   const validation = useMemo(() => parseVendorSettings(settings), [settings]);
+  const [state, formAction, pending] = useActionState(saveSettingsAction, INITIAL);
 
   const setTierAction = (tier: RiskTier, action: RecommendedAction | undefined) => {
     if (!action) return;
@@ -79,7 +83,8 @@ export function SettingsEditor() {
 
   return (
     <div className="grid grid-2" style={{ alignItems: "start" }}>
-      <form className="form card" onSubmit={(e) => e.preventDefault()}>
+      <form className="form card" action={formAction}>
+        <input type="hidden" name="settings" value={JSON.stringify(settings)} />
         <h2>Actions by risk level</h2>
         {RISK_TIERS.map((tier) => (
           <div className="field" key={tier}>
@@ -165,14 +170,19 @@ export function SettingsEditor() {
         </div>
 
         <div className="btn-row">
-          <button type="submit" className="btn btn-primary" disabled>
-            Save
+          <button type="submit" className="btn btn-primary" disabled={pending || !validation.ok}>
+            {pending ? "Saving..." : "Save"}
           </button>
           <button type="button" className="btn" onClick={() => setSettings(DEFAULT_VENDOR_SETTINGS)}>
             Reset to defaults
           </button>
         </div>
-        <p className="muted small">Saving is not connected yet.</p>
+        {state.message && (
+          <p className={state.status === "ERROR" ? "notice" : "badge badge-accent"} role="status">
+            {state.message}
+          </p>
+        )}
+        <p className="muted small">Saved settings apply to your next risk check.</p>
       </form>
 
       <div className="stack">

@@ -1,6 +1,6 @@
 # Etimaad: System Blueprint v2: Cross-Vendor Customer Trust & Fulfillment Scoring Engine (MVP)
 
-> **Status:** v2.12, 2026-11-23. It replaces the Gemini v1 blueprint and includes the v2 review fixes, the tech stack, the WooCommerce/Shopify connectors and the web surfaces (changelog in §21).
+> **Status:** v2.13, 2026-11-23. It replaces the Gemini v1 blueprint and includes the v2 review fixes, the tech stack, the WooCommerce/Shopify connectors and the web surfaces (changelog in §21).
 > **Market:** Pakistan (PKR, phone region +92).
 > **Stack:** Next.js + TypeScript on Vercel (later), Supabase Postgres, Upstash Redis + QStash (§18).
 > **Integrations:** REST API, WooCommerce plugin, Shopify app (§19).
@@ -1021,6 +1021,22 @@ All three live in the same Next.js app (`apps/web`) and the same deployment.
 
 - A vendor only ever sees its own data. Network data appears only as in the risk-check response (§9.3).
 
+#### 20.2.1 Vendor accounts and self-service
+
+| Step | How it works |
+|---|---|
+| 1. Invite | Approving an application invites the applicant as **OWNER**. An admin can also invite from the vendor profile; an owner can invite **STAFF** from `/vendor/team`. |
+| 2. Set password | Supabase emails a one-time link to `/set-password`. The person chooses a password (10+ characters). Etimaad never sees it. |
+| 3. Agreement | On first login the owner accepts the data sharing agreement (name, time, version, text checksum saved). Staff wait for the owner. Until then the portal shows only the agreement. |
+| 4. Self-service | Owner: create API keys (shown once, up to 3 active), revoke keys, save risk settings, add or disable staff. Staff: view only. |
+| Forgot password | `/forgot-password` sends a new link. The answer is the same whether or not the email exists. |
+| Inviting again | Sends a new set-password link instead of a second account. |
+
+- Rules: a login belongs to one store only; a store keeps at least one active owner; owners cannot disable themselves or another owner.
+- Every invite, status change, key change, settings save and agreement is written to `AUDIT_LOG`.
+- Server settings: `SUPABASE_SERVICE_ROLE_KEY` (a secret key, server only). Supabase Redirect URLs must include `/set-password`. Supabase's built-in email sends only a few emails an hour; use custom SMTP before launch.
+- The agreement text is a draft until a lawyer reviews it. A new version asks owners to accept again.
+
 ### 20.3 Admin console
 
 | Page | What the operator can do |
@@ -1095,7 +1111,7 @@ The page shows:
 | Local login | Email + password with dev accounts (`ETIMAAD_AUTH=supabase` switches to Supabase) |
 | Production login | Email + password checked by **Supabase Auth**. The Supabase user must be linked to an `ADMIN_USERS` or `VENDOR_USERS` row by `auth_user_id`; otherwise login fails with the same "wrong email or password" message. The Supabase session is ended right away; Etimaad keeps only its own signed cookie. |
 | Vendor status | Users of a `TERMINATED` vendor cannot log in. `PENDING_VERIFICATION` vendors can (for example to finish KYC). |
-| Adding users | Created in Supabase (Authentication > Users), then linked with the `link-user` script. Etimaad never handles passwords. Public sign-up in Supabase should be off. |
+| Adding users | Vendor users: invited by email and set their own password (§20.2.1). Admin users: created in Supabase, then linked with the `link-user` script. Etimaad never handles passwords. Public sign-up in Supabase should be off. |
 | Session | Signed `httpOnly` cookie, valid for **12 hours** |
 | Rate limit | **5 failed attempts per email in 15 minutes**, then blocked until the window passes |
 | Session storage | Stateless: all session data is in the signed cookie. Disabling a user takes effect when the cookie expires (up to 12 hours). |
@@ -1238,3 +1254,13 @@ The page shows:
 | 2 | Customer detail: score breakdown, rules, exclusions, by store, orders, view log | §20.3.3 |
 | 3 | Manual score rebuild for ADMIN and SUPPORT | §20.3.3 |
 | 4 | No database change | |
+
+### v2.12 → v2.13 (vendor accounts and self-service)
+
+| # | Change | Where |
+|---|---|---|
+| 1 | Email invites; vendor users set their own password; forgot password | §20.2.1, §20.5 |
+| 2 | Owner invited on approval; admin can invite from the vendor profile | §20.2.1 |
+| 3 | Data sharing agreement accepted on first login | §20.2.1 |
+| 4 | Owners create and revoke API keys, save settings, manage staff | §20.2.1 |
+| 5 | No database change (uses existing `DATA_SHARING_AGREEMENTS` and `VENDOR_USERS`) | |

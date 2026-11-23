@@ -9,25 +9,30 @@ export const dynamic = "force-dynamic";
 const DAY_MS = 86_400_000;
 const RECENT_CHECKS = 20;
 
-const GETTING_STARTED = [
-  { text: "Accept the data sharing agreement", href: null },
-  { text: "Create an API key", href: "/vendor/api-keys" },
-  { text: "Install the WooCommerce plugin or Shopify app", href: "/integrations" },
-  { text: "Choose actions for each risk level", href: "/vendor/settings" },
-] as const;
-
 async function loadStats(vendorId: string | null) {
   if (!vendorId) return null;
   try {
     const { store } = getRuntime();
     const now = new Date();
-    const [overview, vendor, lookups] = await Promise.all([
+    const [overview, vendor, lookups, keys, users, lastOrders] = await Promise.all([
       store.vendorOverview(vendorId, new Date(now.getTime() - 30 * DAY_MS), startOfPktDay(now)),
       store.getVendor(vendorId),
       store.listVendorLookups(vendorId, RECENT_CHECKS),
+      store.listVendorApiKeys(vendorId),
+      store.listVendorUsers(vendorId),
+      store.listVendorOrders(vendorId, 1),
     ]);
     if (!vendor) return null;
-    return { ...overview, lookups, quota: dailyLookupQuota(vendor.status, overview.ordersReported30Days) };
+    const settingsSaved = typeof vendor.settings === "object" && vendor.settings !== null && Object.keys(vendor.settings).length > 0;
+    const steps = [
+      { text: "Accept the data sharing agreement", href: null, done: true },
+      { text: "Create an API key", href: "/vendor/api-keys", done: keys.some((k) => k.status === "ACTIVE") },
+      { text: "Connect your store and send your first order", href: "/integrations", done: lastOrders.length > 0 },
+      { text: "Run your first risk check", href: "/docs", done: lookups.length > 0 },
+      { text: "Choose actions for each risk level", href: "/vendor/settings", done: settingsSaved },
+      { text: "Add your team", href: "/vendor/team", done: users.length > 1 },
+    ];
+    return { ...overview, lookups, steps, quota: dailyLookupQuota(vendor.status, overview.ordersReported30Days) };
   } catch {
     return null;
   }
@@ -73,14 +78,21 @@ export default async function VendorOverviewPage() {
         ])}
         emptyMessage="No risk checks yet."
       />
-      <div className="card stack">
-        <h2>Getting started</h2>
-        <ul className="check-list">
-          {GETTING_STARTED.map((item) => (
-            <li key={item.text}>{item.href ? <Link href={item.href}>{item.text}</Link> : item.text}</li>
-          ))}
-        </ul>
-      </div>
+      {stats && (
+        <div className="card stack">
+          <h2>
+            Getting started ({stats.steps.filter((s) => s.done).length} of {stats.steps.length} done)
+          </h2>
+          <ul className="plain-list">
+            {stats.steps.map((item) => (
+              <li key={item.text}>
+                <strong className={item.done ? "status-ok" : "status-mid"}>{item.done ? "Done" : "To do"}</strong>{" "}
+                {item.href && !item.done ? <Link href={item.href}>{item.text}</Link> : item.text}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
     </>
   );
 }

@@ -4,7 +4,7 @@ import type { AdminAuditEntry, AdminAuditRow } from "./store";
 
 export function adminAuditValues(entry: AdminAuditEntry) {
   return {
-    actorType: "ADMIN" as const,
+    actorType: entry.actorType ?? ("ADMIN" as const),
     actorId: entry.actorId,
     action: entry.action,
     entityType: entry.entityType,

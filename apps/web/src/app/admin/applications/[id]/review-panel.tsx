@@ -43,9 +43,10 @@ export function ReviewPanel(props: ReviewPanelProps) {
           <label>Signing secret</label>
           <div className="secret">{c.signingSecret}</div>
         </div>
+        {state.invite && <p className="badge badge-accent">{state.invite}</p>}
         <p className="muted small">
-          The vendor starts on {props.probationDays} days of probation. Next, add the owner&apos;s login in Supabase
-          and link it with the link-user script.
+          The vendor starts on {props.probationDays} days of probation. The owner can also create their own keys in
+          the vendor portal after setting a password.
         </p>
         <p>
           <Link href={`/admin/vendors/${c.vendorId}`}>Open the new vendor profile</Link>

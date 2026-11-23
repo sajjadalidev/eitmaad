@@ -39,20 +39,29 @@ export class DevAuthenticator implements Authenticator {
     for (const user of users) this.byEmail.set(user.email.toLowerCase(), user);
   }
 
+  // Users invited locally (not in dev-credentials.json) log in with the same dev password.
+  invitedLookup: ((email: string) => Promise<PortalUser | null>) | null = null;
+  devPasswordHash: string | null = null;
+
   async verify(email: string, password: string): Promise<PortalUser | null> {
-    const user = this.byEmail.get(email.trim().toLowerCase());
+    const key = email.trim().toLowerCase();
+    const user = this.byEmail.get(key);
     // Hash even for unknown emails, so the response time does not reveal which emails exist.
     dummyHash ??= hashPassword("not-a-real-password");
-    const passwordOk = verifyPassword(password, user?.passwordHash ?? dummyHash);
-    if (!user || !passwordOk || user.status !== "ACTIVE") return null;
+    const passwordOk = verifyPassword(password, user?.passwordHash ?? this.devPasswordHash ?? dummyHash);
+    if (!user) {
+      const invited = passwordOk && this.invitedLookup ? await this.invitedLookup(key) : null;
+      return invited && invited.status === "ACTIVE" ? invited : null;
+    }
+    if (!passwordOk || user.status !== "ACTIVE") return null;
     const { passwordHash: _hash, ...portalUser } = user;
     return portalUser;
   }
 }
 
-function createDevAuthenticator(): Authenticator {
+function createDevAuthenticator(): DevAuthenticator {
   const passwordHash = hashPassword(credentials.devPassword);
-  return new DevAuthenticator(
+  const auth = new DevAuthenticator(
     credentials.users.map((u) => ({
       id: u.id,
       email: u.email,
@@ -64,6 +73,8 @@ function createDevAuthenticator(): Authenticator {
       status: "ACTIVE",
     })),
   );
+  auth.devPasswordHash = passwordHash;
+  return auth;
 }
 
 // ---------- Production (Supabase Auth) ----------
@@ -72,6 +83,8 @@ export type SignInFn = (email: string, password: string) => Promise<{ authUserId
 
 export interface PortalUserLookup {
   findPortalUserByAuthId(authUserId: string): Promise<PortalUser | null>;
+  // Only the local in-memory store has this.
+  findDevPortalUserByEmail?(email: string): Promise<PortalUser | null>;
 }
 
 export class SupabaseAuthenticator implements Authenticator {
@@ -107,7 +120,7 @@ export function supabaseAuthConfigured(): boolean {
 
 // ---------- Choice ----------
 
-const globalForAuth = globalThis as unknown as { etimaadDevAuthenticator?: Authenticator };
+const globalForAuth = globalThis as unknown as { etimaadDevAuthenticator?: DevAuthenticator };
 
 function useSupabase(): boolean {
   return process.env.NODE_ENV === "production" || process.env.ETIMAAD_AUTH === "supabase";
@@ -123,5 +136,9 @@ export function getAuthenticator(lookup: () => PortalUserLookup): Authenticator 
     );
   }
   globalForAuth.etimaadDevAuthenticator ??= createDevAuthenticator();
+  const store = lookup();
+  globalForAuth.etimaadDevAuthenticator.invitedLookup = store.findDevPortalUserByEmail
+    ? (email) => store.findDevPortalUserByEmail!(email)
+    : null;
   return globalForAuth.etimaadDevAuthenticator;
 }

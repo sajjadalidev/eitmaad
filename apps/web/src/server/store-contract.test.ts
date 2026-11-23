@@ -13,6 +13,10 @@ import { APPROVAL_CHECKS, reviewApplication } from "./application-review";
 import { authenticate } from "./auth";
 import { findCustomerByPhone, loadCustomerDetail, recomputeForAdmin } from "./customer-detail";
 import { manageVendor } from "./vendor-management";
+import type { InviteResult } from "./account-invites";
+import { AGREEMENT_VERSION, acceptAgreement, hasCurrentAgreement } from "./agreement";
+import { inviteVendorUser, setVendorUserStatus } from "./vendor-accounts";
+import { createOwnApiKey, revokeOwnApiKey, saveOwnSettings } from "./vendor-self-service";
 import { ingestEvents } from "./ingest";
 import { InMemoryStore } from "./memory-store";
 import { PostgresStore } from "./postgres-store";
@@ -117,6 +121,27 @@ async function vendorOf(store: EtimaadStore, l: Letter): Promise<VendorRecord> {
 }
 
 const ctx = (store: EtimaadStore) => ({ store, pepper: PEPPER, keyVersion: 1, now: NOW });
+
+// Stands in for Supabase: hands out new login ids and records password links.
+function fakeInviter() {
+  const inviter = {
+    sendsEmail: true,
+    lastId: null as string | null,
+    next: null as InviteResult | null,
+    links: [] as string[],
+    async invite(): Promise<InviteResult> {
+      const result = inviter.next ?? { status: "INVITED" as const, authUserId: crypto.randomUUID() };
+      inviter.next = null;
+      if (result.status === "INVITED") inviter.lastId = result.authUserId;
+      return result;
+    },
+    async sendPasswordLink(email: string) {
+      inviter.links.push(email);
+      return true;
+    },
+  };
+  return inviter;
+}
 
 const APPLICATION = {
   legalName: "Acme Traders Pvt Ltd",
@@ -504,6 +529,73 @@ describe.each(HARNESSES)("%s", (_name, make) => {
       const log = await store.listAdminAudit("customer", found.customerId, 10);
       expect(log.map((a) => a.action)).toEqual(["CUSTOMER_RECOMPUTE", "CUSTOMER_VIEW"]);
       expect(await store.listAdminAudit("customer_search", "none", 10)).toHaveLength(1);
+    });
+  });
+
+  it("invites vendor users and applies the team rules", async () => {
+    await withHarness(make, async (store) => {
+      const inviter = fakeInviter();
+      const ctxs = { store, inviter, redirectTo: "https://example.test/set-password", now: NOW };
+      const admin = { type: "ADMIN" as const, id: "admin-1", name: "Admin", role: "ADMIN", vendorId: null };
+
+      const owner = await inviteVendorUser(ctxs, admin, { vendorId: VENDOR_ID.a, email: "Owner@A.pk", name: "Owner A", role: "OWNER" });
+      expect(owner.status).toBe("INVITED");
+      const ownerUser = (await store.listVendorUsers(VENDOR_ID.a))[0]!;
+      expect(ownerUser).toMatchObject({ email: "owner@a.pk", role: "OWNER", status: "ACTIVE", linked: true });
+      const portal = await store.findPortalUserByAuthId(inviter.lastId!);
+      expect(portal).toMatchObject({ kind: "vendor", vendorId: VENDOR_ID.a, role: "OWNER" });
+
+      // Inviting again sends a new set-password link instead.
+      expect((await inviteVendorUser(ctxs, admin, { vendorId: VENDOR_ID.a, email: "owner@a.pk", name: "Owner A", role: "OWNER" })).status).toBe("LINK_SENT");
+      expect(inviter.links).toEqual(["owner@a.pk"]);
+
+      const ownerActor = { type: "VENDOR" as const, id: ownerUser.id, name: "Owner A", role: "OWNER", vendorId: VENDOR_ID.a };
+      expect((await inviteVendorUser(ctxs, ownerActor, { vendorId: VENDOR_ID.a, email: "x@a.pk", name: "X", role: "OWNER" })).status).toBe("ERROR");
+      expect((await inviteVendorUser(ctxs, ownerActor, { vendorId: VENDOR_ID.b, email: "x@b.pk", name: "X", role: "STAFF" })).status).toBe("ERROR");
+      expect((await inviteVendorUser(ctxs, ownerActor, { vendorId: VENDOR_ID.a, email: "staff@a.pk", name: "Staff A", role: "STAFF" })).status).toBe("INVITED");
+      const staffAuthId = inviter.lastId!;
+
+      // The same login cannot join another store.
+      inviter.next = { status: "INVITED", authUserId: staffAuthId };
+      expect((await inviteVendorUser(ctxs, admin, { vendorId: VENDOR_ID.b, email: "staff@a.pk", name: "Staff", role: "STAFF" })).message).toMatch(/another/);
+
+      const staff = (await store.listVendorUsers(VENDOR_ID.a)).find((u) => u.role === "STAFF")!;
+      const statusCtx = { store, now: NOW };
+      expect((await setVendorUserStatus(statusCtx, admin, { vendorId: VENDOR_ID.a, userId: ownerUser.id, status: "DISABLED" })).message).toMatch(/at least one active owner/);
+      expect((await setVendorUserStatus(statusCtx, ownerActor, { vendorId: VENDOR_ID.a, userId: staff.id, status: "DISABLED" })).status).toBe("SAVED");
+      expect((await store.findPortalUserByAuthId(staffAuthId))?.status).toBe("DISABLED");
+    });
+  });
+
+  it("lets an owner accept the agreement, manage keys and save settings", async () => {
+    await withHarness(make, async (store) => {
+      const ctxs = { store, now: NOW };
+      const owner = { id: "u-owner", sub: "u-owner", name: "Owner", role: "OWNER", vendorId: VENDOR_ID.d };
+      const staff = { ...owner, id: "u-staff", sub: "u-staff", role: "STAFF" };
+
+      expect(await hasCurrentAgreement(store, VENDOR_ID.d)).toBe(false);
+      expect((await acceptAgreement(ctxs, staff, { signedByName: "Staff Person", accepted: "yes" })).status).toBe("ERROR");
+      expect((await acceptAgreement(ctxs, owner, { signedByName: "Owner Person" })).status).toBe("ERROR");
+      expect(await acceptAgreement(ctxs, owner, { signedByName: "Owner Person", accepted: "yes" })).toEqual({ status: "SAVED" });
+      expect(await hasCurrentAgreement(store, VENDOR_ID.d)).toBe(true);
+      expect(await store.getAgreement(VENDOR_ID.d)).toMatchObject({ signedByName: "Owner Person", agreementVersion: AGREEMENT_VERSION });
+
+      expect((await createOwnApiKey(ctxs, staff)).status).toBe("ERROR");
+      const created = await createOwnApiKey(ctxs, owner);
+      if (created.status !== "SAVED") throw new Error("Key not created");
+      const prefix = created.secret.apiKey.split("_")[1]!;
+      const key = await store.findApiKeyByPrefix(prefix);
+      expect(await store.resolveSigningSecret(key!.signingSecretRef)).toBe(created.secret.signingSecret);
+      expect((await createOwnApiKey(ctxs, owner)).status).toBe("SAVED");
+      // Vendor d already has one key from the test setup, so this is the fourth.
+      expect((await createOwnApiKey(ctxs, owner)).status).toBe("ERROR");
+      expect(await revokeOwnApiKey(ctxs, owner, key!.id)).toEqual({ status: "SAVED" });
+      expect((await revokeOwnApiKey(ctxs, owner, key!.id)).status).toBe("ERROR");
+
+      expect((await saveOwnSettings(ctxs, owner, { high_value_threshold_pkr: -5 })).status).toBe("ERROR");
+      expect((await saveOwnSettings(ctxs, staff, { high_value_threshold_pkr: 9000 })).status).toBe("ERROR");
+      expect(await saveOwnSettings(ctxs, owner, { high_value_threshold_pkr: 9000 })).toEqual({ status: "SAVED" });
+      expect((await store.getVendor(VENDOR_ID.d))?.settings).toMatchObject({ high_value_threshold_pkr: 9000 });
     });
   });
 

@@ -16,6 +16,8 @@ import type {
   ApplicationEvent,
   ApplicationMatches,
   ApprovedVendorInput,
+  AgreementRecord,
+  NewVendorUser,
   AdminAuditEntry,
   AdminAuditRow,
   CustomerLookupCount,
@@ -61,6 +63,9 @@ export class InMemoryStore implements EtimaadStore {
   readonly audit: (AuditRowValues & { id: string })[] = [];
   readonly vendorAudit: (VendorAuditRow & { id: string })[] = [];
   readonly customers = new Map<string, CustomerRecord>();
+  readonly agreements = new Map<string, AgreementRecord>();
+  // Local stand-in for Supabase Auth users: email to auth user id.
+  readonly devAuthUsers = new Map<string, string>();
   readonly adminAudit: (ReturnType<typeof adminAuditValues> & { id: string })[] = [];
   // Stands in for dates the dev vendors do not have.
   readonly startedAt = new Date();
@@ -347,6 +352,87 @@ export class InMemoryStore implements EtimaadStore {
       .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
       .slice(0, limit)
       .map((r) => toAdminAuditRow(r.id, r.action, r.after, r.createdAt));
+  }
+
+  async linkVendorUser(user: NewVendorUser): Promise<string> {
+    const email = user.email.trim().toLowerCase();
+    const existing = [...this.portalUsers.entries()].find(([, u]) => u.vendorId === user.vendorId && u.email === email);
+    const id = existing?.[1].id ?? randomUUID();
+    if (existing) this.portalUsers.delete(existing[0]);
+    this.portalUsers.set(user.authUserId, {
+      id,
+      email,
+      name: user.name,
+      kind: "vendor",
+      role: user.role,
+      vendorId: user.vendorId,
+      status: existing?.[1].status ?? "ACTIVE",
+    });
+    return id;
+  }
+
+  async setVendorUserStatus(vendorId: string, userId: string, status: "ACTIVE" | "DISABLED"): Promise<boolean> {
+    for (const [authId, u] of this.portalUsers) {
+      if (u.id === userId && u.vendorId === vendorId) {
+        this.portalUsers.set(authId, { ...u, status });
+        return true;
+      }
+    }
+    return false;
+  }
+
+  async findAuthUserIdByEmail(email: string): Promise<string | null> {
+    return this.devAuthUsers.get(email.trim().toLowerCase()) ?? null;
+  }
+
+  // Local development only: lets an invited user log in with the dev password.
+  async findDevPortalUserByEmail(email: string): Promise<PortalUser | null> {
+    const authId = this.devAuthUsers.get(email.trim().toLowerCase());
+    return authId ? (this.portalUsers.get(authId) ?? null) : null;
+  }
+
+  async getAgreement(vendorId: string): Promise<AgreementRecord | null> {
+    return this.agreements.get(vendorId) ?? null;
+  }
+
+  async saveAgreement(agreement: AgreementRecord): Promise<void> {
+    this.agreements.set(agreement.vendorId, { ...agreement });
+  }
+
+  async addVendorApiKey(
+    vendorId: string,
+    credentials: { keyPrefix: string; apiKey: string; signingSecret: string },
+    now: Date,
+  ): Promise<string> {
+    const id = randomUUID();
+    this.addApiKey(
+      {
+        id,
+        vendorId,
+        keyPrefix: credentials.keyPrefix,
+        keyHash: sha256Hex(credentials.apiKey),
+        scopes: API_SCOPES,
+        signingSecretRef: `memory-${credentials.keyPrefix}`,
+        status: "ACTIVE",
+        expiresAt: null,
+      },
+      credentials.signingSecret,
+      now,
+    );
+    return id;
+  }
+
+  async revokeVendorApiKey(vendorId: string, keyId: string, now: Date): Promise<boolean> {
+    const key = [...this.apiKeys.values()].find((k) => k.id === keyId && k.vendorId === vendorId && k.status === "ACTIVE");
+    if (!key) return false;
+    this.apiKeys.set(key.keyPrefix, { ...key, status: "REVOKED" });
+    this.keyTimes.set(key.id, { createdAt: this.keyTimes.get(key.id)?.createdAt ?? now, revokedAt: now });
+    return true;
+  }
+
+  async saveVendorSettings(vendorId: string, settings: Record<string, unknown>): Promise<void> {
+    const v = this.vendors.get(vendorId);
+    if (v) this.vendors.set(vendorId, { ...v, settings });
   }
 
   addVendor(vendor: VendorRecord): void {
