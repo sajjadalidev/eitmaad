@@ -1,6 +1,6 @@
 # Etimaad: System Blueprint v2: Cross-Vendor Customer Trust & Fulfillment Scoring Engine (MVP)
 
-> **Status:** v2.9, 2026-11-23. It replaces the Gemini v1 blueprint and includes the v2 review fixes, the tech stack, the WooCommerce/Shopify connectors and the web surfaces (changelog in §21).
+> **Status:** v2.10, 2026-11-23. It replaces the Gemini v1 blueprint and includes the v2 review fixes, the tech stack, the WooCommerce/Shopify connectors and the web surfaces (changelog in §21).
 > **Market:** Pakistan (PKR, phone region +92).
 > **Stack:** Next.js + TypeScript on Vercel (later), Supabase Postgres, Upstash Redis + QStash (§18).
 > **Integrations:** REST API, WooCommerce plugin, Shopify app (§19).
@@ -1026,9 +1026,27 @@ All three live in the same Next.js app (`apps/web`) and the same deployment.
 | Page | What the operator can do |
 |---|---|
 | `/admin` | Overview: KYC queue, open disputes, anomaly alerts |
-| `/admin/vendors` | KYC review with the §5.1 checklist; approve, restrict, terminate |
+| `/admin/vendors` | All vendors with 30-day activity, and the list of applications |
+| `/admin/applications/[id]` | Review one application: details, cross checks, decision, history |
 | `/admin/disputes` | Disputes routed to ADMIN; uphold or reject |
 | `/admin/scoring` | Read-only view of the active model parameters and reason codes |
+
+#### 20.3.1 Application review flow
+
+| Step | From status | To status | Who |
+|---|---|---|---|
+| Start review | NEW | REVIEWING | ADMIN, SUPPORT |
+| Ask for documents (pick from a list) | NEW, REVIEWING, DOCUMENTS_REQUESTED | DOCUMENTS_REQUESTED | ADMIN, SUPPORT |
+| Documents received | DOCUMENTS_REQUESTED | REVIEWING | ADMIN, SUPPORT |
+| Approve | REVIEWING | APPROVED | ADMIN |
+| Reject (reason required) | NEW, REVIEWING, DOCUMENTS_REQUESTED | REJECTED | ADMIN |
+| Add a note | any | no change | ADMIN, SUPPORT |
+
+- **Approve** needs all four §5.1 checks ticked, a KYC level and a starting trust weight (up to 1.0 for full KYC, 0.7 for light).
+- Approval creates the vendor in **PROBATION** for 60 days with its first API key. The key and signing secret are shown **once** to the admin.
+- **Cross checks** on the page: other applications with the same email or network, vendors with a similar name, website given, email domain against the website, personal email.
+- Every step is saved with an `AUDIT_LOG` row in one transaction. If two admins act at once, only the first change is saved.
+- Documents are sent by email for now. Upload in the portal and email notices come later.
 
 ### 20.4 Rules
 - **Login must be enforced before any deployment.** Until then the portal and console are local previews with no data.
@@ -1157,3 +1175,12 @@ All three live in the same Next.js app (`apps/web`) and the same deployment.
 | 2 | Supabase users are linked to admin or vendor users by `auth_user_id` | §20.5, §8.1 |
 | 3 | Users of terminated vendors cannot log in | §20.5 |
 | 4 | Admin MFA is still open | §17 |
+
+### v2.9 → v2.10 (application review and per-vendor data)
+
+| # | Change | Where |
+|---|---|---|
+| 1 | Application review flow: start, ask for documents, approve, reject, notes, history | §20.3.1 |
+| 2 | Migration 0005: `DOCUMENTS_REQUESTED` status, `requested_documents` and `vendor_id` on applications | §8.1 |
+| 3 | Admin vendors list with 30-day activity per vendor | §20.3 |
+| 4 | Vendor portal shows its own orders (with whose fault) and recent risk checks | §20.2 |

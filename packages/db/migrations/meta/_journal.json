@@ -36,6 +36,13 @@
       "when": 1795416606793,
       "tag": "0004_vendor_applications",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1795434740089,
+      "tag": "0005_application_review",
+      "breakpoints": true
     }
   ]
 }

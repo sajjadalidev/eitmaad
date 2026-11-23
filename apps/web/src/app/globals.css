@@ -445,7 +445,8 @@ tr:last-child td {
 }
 
 input,
-select {
+select,
+textarea {
   font: inherit;
   padding: 9px 12px;
   border-radius: 8px;
@@ -456,7 +457,8 @@ select {
 }
 
 input:focus,
-select:focus {
+select:focus,
+textarea:focus {
   outline: 2px solid var(--accent);
   outline-offset: 1px;
 }
@@ -610,4 +612,53 @@ input[aria-invalid="true"] {
   .portal-main {
     padding: 20px 16px 40px;
   }
+}
+
+/* ---------- Admin review ---------- */
+.choice {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  font-weight: 400;
+}
+.choice input {
+  margin-top: 4px;
+  width: auto;
+}
+.timeline {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  gap: 12px;
+}
+.timeline li {
+  border-left: 3px solid var(--border);
+  padding-left: 12px;
+}
+.secret {
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 0.85rem;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 10px;
+  overflow-wrap: anywhere;
+  user-select: all;
+}
+.status-ok {
+  color: var(--ok);
+}
+.status-bad {
+  color: var(--bad);
+}
+.status-mid {
+  color: var(--mid);
+}
+.plain-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  gap: 8px;
 }

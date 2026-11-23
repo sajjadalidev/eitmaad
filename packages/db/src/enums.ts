@@ -62,4 +62,10 @@ export const adminRoleEnum = pgEnum("admin_role", ["SUPPORT", "ANALYST", "ADMIN"
 export const adminStatusEnum = pgEnum("admin_status", ["ACTIVE", "DISABLED"]);
 export const vendorUserRoleEnum = pgEnum("vendor_user_role", ["OWNER", "STAFF"]);
 export const businessTypeEnum = pgEnum("business_type", ["PVT_LTD", "PARTNERSHIP", "SOLE_PROPRIETOR"]);
-export const applicationStatusEnum = pgEnum("application_status", ["NEW", "REVIEWING", "APPROVED", "REJECTED"]);
+export const applicationStatusEnum = pgEnum("application_status", [
+  "NEW",
+  "REVIEWING",
+  "DOCUMENTS_REQUESTED",
+  "APPROVED",
+  "REJECTED",
+]);

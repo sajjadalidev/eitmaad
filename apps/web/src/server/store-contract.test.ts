@@ -9,6 +9,7 @@ import { sha256Hex, type VendorStatus } from "@etimaad/core";
 import { apiKeys, reasonCodeRows, reasonCodes, scoreModelRow, scoreModelVersions, vendors } from "@etimaad/db";
 import { drizzle } from "drizzle-orm/pglite";
 import { describe, expect, it } from "vitest";
+import { APPROVAL_CHECKS, reviewApplication } from "./application-review";
 import { authenticate } from "./auth";
 import { ingestEvents } from "./ingest";
 import { InMemoryStore } from "./memory-store";
@@ -114,6 +115,19 @@ async function vendorOf(store: EtimaadStore, l: Letter): Promise<VendorRecord> {
 }
 
 const ctx = (store: EtimaadStore) => ({ store, pepper: PEPPER, keyVersion: 1, now: NOW });
+
+const APPLICATION = {
+  legalName: "Acme Traders Pvt Ltd",
+  displayName: "Acme",
+  category: "ecommerce" as const,
+  businessType: "PVT_LTD" as const,
+  platform: "WOOCOMMERCE" as const,
+  storeUrl: "https://acme.pk",
+  contactName: "Ali",
+  contactEmail: "ali@acme.pk",
+  ipHash: "hash-9",
+  status: "NEW" as const,
+};
 
 async function report(store: EtimaadStore, l: Letter, events: unknown[]) {
   return ingestEvents(ctx(store), await vendorOf(store, l), { events });
@@ -271,6 +285,105 @@ describe.each(HARNESSES)("%s", (_name, make) => {
       expect(
         await store.vendorOverview(VENDOR_ID.b, new Date(NOW.getTime() - 30 * 86_400_000), new Date(NOW.getTime() - 3_600_000)),
       ).toEqual({ ordersReported30Days: 0, lookupsToday: 0, ordersMissingReason: 0, openDisputes: 0 });
+    });
+  });
+
+  it("lists vendor summaries, orders and lookups", async () => {
+    await withHarness(make, async (store) => {
+      await report(store, "a", [event({ phone: "03001212121" }), refusal({ phone: "03001212121" })]);
+      await check(store, "a", "03001212121", 4500);
+      const since = new Date(NOW.getTime() - 30 * 86_400_000);
+
+      const summaries = await store.listVendorSummaries(since);
+      expect(summaries.map((s) => s.displayName)).toEqual(["Vendor a", "Vendor b", "Vendor c", "Vendor d"]);
+      expect(summaries[0]).toMatchObject({ orders30Days: 2, userFaults30Days: 1, lookups30Days: 1, portalUsers: 0 });
+      expect(summaries[1]).toMatchObject({ orders30Days: 0, userFaults30Days: 0, lookups30Days: 0 });
+
+      const orders = await store.listVendorOrders(VENDOR_ID.a, 10);
+      expect(orders).toHaveLength(2);
+      expect(orders[0]!.occurredAt.getTime()).toBeGreaterThanOrEqual(orders[1]!.occurredAt.getTime());
+      expect(await store.listVendorOrders(VENDOR_ID.b, 10)).toEqual([]);
+
+      const lookups = await store.listVendorLookups(VENDOR_ID.a, 10);
+      expect(lookups).toHaveLength(1);
+      expect(lookups[0]).toMatchObject({ orderValuePkr: 4500 });
+      expect(lookups[0]).not.toHaveProperty("phoneHash");
+    });
+  });
+
+  it("runs the application review flow up to approval", async () => {
+    await withHarness(make, async (store) => {
+      const appId = "00000000-0000-4000-8000-000000000020";
+      await store.saveApplication({ ...APPLICATION, id: appId, createdAt: NOW });
+      const review = (role: string, input: Record<string, unknown>) =>
+        reviewApplication({ store, now: NOW }, { id: `user-${role}`, name: `${role} user`, role }, { applicationId: appId, ...input });
+
+      expect(await review("SUPPORT", { action: "START_REVIEW" })).toEqual({ status: "SAVED" });
+      expect(await review("SUPPORT", { action: "REQUEST_DOCUMENTS", documents: [] })).toMatchObject({ status: "ERROR" });
+      expect(
+        await review("SUPPORT", { action: "REQUEST_DOCUMENTS", documents: ["NTN_CERTIFICATE", "OWNER_CNIC"], note: "Please send" }),
+      ).toEqual({ status: "SAVED" });
+      expect(await store.getApplication(appId)).toMatchObject({
+        status: "DOCUMENTS_REQUESTED",
+        requestedDocuments: ["NTN_CERTIFICATE", "OWNER_CNIC"],
+        reviewerNote: "Please send",
+      });
+      expect(await review("SUPPORT", { action: "APPROVE" })).toMatchObject({ status: "ERROR" });
+      expect(await review("SUPPORT", { action: "DOCUMENTS_RECEIVED" })).toEqual({ status: "SAVED" });
+      expect((await store.getApplication(appId))?.requestedDocuments).toEqual([]);
+
+      const approve = { action: "APPROVE", kycLevel: "LIGHT", checks: Object.keys(APPROVAL_CHECKS) };
+      expect(await review("SUPPORT", { ...approve, trustWeight: "0.5" })).toMatchObject({ status: "ERROR" });
+      expect(await review("ADMIN", { ...approve, checks: ["NTN_ACTIVE"], trustWeight: "0.5" })).toMatchObject({ status: "ERROR" });
+      expect(await review("ADMIN", { ...approve, trustWeight: "0.9" })).toMatchObject({ status: "ERROR" });
+
+      const approved = await review("ADMIN", { ...approve, trustWeight: "0.6" });
+      if (approved.status !== "SAVED" || !approved.credentials) throw new Error("Approval failed");
+      const { vendorId, keyPrefix, signingSecret } = approved.credentials;
+
+      expect(await store.getVendor(vendorId)).toMatchObject({ displayName: "Acme", status: "PROBATION", trustWeight: 0.6 });
+      expect(await store.getApplication(appId)).toMatchObject({ status: "APPROVED", vendorId });
+      const key = await store.findApiKeyByPrefix(keyPrefix);
+      expect(key?.vendorId).toBe(vendorId);
+      expect(await store.resolveSigningSecret(key!.signingSecretRef)).toBe(signingSecret);
+
+      const history = await store.listApplicationHistory(appId);
+      expect(history.map((h) => h.action)).toEqual(["START_REVIEW", "REQUEST_DOCUMENTS", "DOCUMENTS_RECEIVED", "APPROVE"]);
+      expect(history[1]).toMatchObject({ actorName: "SUPPORT user", documents: ["NTN_CERTIFICATE", "OWNER_CNIC"] });
+      expect(history[3]).toMatchObject({ fromStatus: "REVIEWING", toStatus: "APPROVED" });
+
+      expect(await review("ADMIN", { action: "REJECT", note: "too late" })).toMatchObject({ status: "ERROR" });
+      expect(await review("ADMIN", { action: "ADD_NOTE", note: "Keys sent by email" })).toEqual({ status: "SAVED" });
+    });
+  });
+
+  it("rejects with a reason and saves only one of two parallel decisions", async () => {
+    await withHarness(make, async (store) => {
+      const appId = "00000000-0000-4000-8000-000000000021";
+      await store.saveApplication({ ...APPLICATION, id: appId, createdAt: NOW });
+      const admin = { id: "admin-1", name: "Admin", role: "ADMIN" };
+      const run = (input: Record<string, unknown>) =>
+        reviewApplication({ store, now: NOW }, admin, { applicationId: appId, ...input });
+
+      expect(await run({ action: "REJECT" })).toMatchObject({ status: "ERROR" });
+      const results = await Promise.all([
+        run({ action: "REJECT", note: "Fake store" }),
+        run({ action: "START_REVIEW" }),
+      ]);
+      expect(results.filter((r) => r.status === "SAVED")).toHaveLength(1);
+      expect(await store.listApplicationHistory(appId)).toHaveLength(1);
+    });
+  });
+
+  it("finds matching applications and vendors", async () => {
+    await withHarness(make, async (store) => {
+      await store.saveApplication({ ...APPLICATION, id: "00000000-0000-4000-8000-000000000030", createdAt: NOW });
+      await store.saveApplication({ ...APPLICATION, id: "00000000-0000-4000-8000-000000000031", createdAt: NOW });
+      const app = await store.getApplication("00000000-0000-4000-8000-000000000031");
+      const matches = await store.findApplicationMatches({ ...app!, displayName: "Vendor a" });
+      expect(matches.otherApplicationsSameEmail).toBe(1);
+      expect(matches.otherApplicationsSameNetwork).toBe(1);
+      expect(matches.similarVendors.map((v) => v.displayName)).toEqual(["Vendor a"]);
     });
   });
 

@@ -1,11 +1,13 @@
 import Link from "next/link";
 import { dailyLookupQuota, startOfPktDay } from "@etimaad/core";
+import { DataTable } from "@/components/data-table";
 import { getRuntime } from "@/server/config";
 import { requireSession } from "@/server/require-session";
 
 export const dynamic = "force-dynamic";
 
 const DAY_MS = 86_400_000;
+const RECENT_CHECKS = 20;
 
 const GETTING_STARTED = [
   { text: "Accept the data sharing agreement", href: null },
@@ -19,12 +21,13 @@ async function loadStats(vendorId: string | null) {
   try {
     const { store } = getRuntime();
     const now = new Date();
-    const [overview, vendor] = await Promise.all([
+    const [overview, vendor, lookups] = await Promise.all([
       store.vendorOverview(vendorId, new Date(now.getTime() - 30 * DAY_MS), startOfPktDay(now)),
       store.getVendor(vendorId),
+      store.listVendorLookups(vendorId, RECENT_CHECKS),
     ]);
     if (!vendor) return null;
-    return { ...overview, quota: dailyLookupQuota(vendor.status, overview.ordersReported30Days) };
+    return { ...overview, lookups, quota: dailyLookupQuota(vendor.status, overview.ordersReported30Days) };
   } catch {
     return null;
   }
@@ -56,6 +59,20 @@ export default async function VendorOverviewPage() {
         ))}
       </div>
       <p className="muted small">Risk checks reset at midnight Pakistan time.</p>
+      <h2>Recent risk checks</h2>
+      <DataTable
+        columns={["Time (UTC)", "Order value (PKR)", "Risk level", "Advice", "Reply time"]}
+        rows={(stats?.lookups ?? []).map((l) => [
+          l.createdAt.toISOString().slice(0, 16).replace("T", " "),
+          l.orderValuePkr.toLocaleString("en-PK"),
+          <span key="t" className="badge">
+            {l.returnedTier.replaceAll("_", " ")}
+          </span>,
+          l.returnedAction.replaceAll("_", " "),
+          `${l.latencyMs} ms`,
+        ])}
+        emptyMessage="No risk checks yet."
+      />
       <div className="card stack">
         <h2>Getting started</h2>
         <ul className="check-list">

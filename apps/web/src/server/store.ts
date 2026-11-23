@@ -99,7 +99,8 @@ export interface LookupRecord {
 
 export const VENDOR_CATEGORIES = ["food", "ecommerce", "retail"] as const;
 export const BUSINESS_TYPES = ["PVT_LTD", "PARTNERSHIP", "SOLE_PROPRIETOR"] as const;
-export const APPLICATION_STATUSES = ["NEW", "REVIEWING", "APPROVED", "REJECTED"] as const;
+export const APPLICATION_STATUSES = ["NEW", "REVIEWING", "DOCUMENTS_REQUESTED", "APPROVED", "REJECTED"] as const;
+export type ApplicationStatus = (typeof APPLICATION_STATUSES)[number];
 
 export interface VendorApplicationRecord {
   id: string;
@@ -116,6 +117,70 @@ export interface VendorApplicationRecord {
   createdAt: Date;
 }
 
+// An application with its review state (blueprint section 20.3).
+export interface ApplicationDetail extends VendorApplicationRecord {
+  reviewerNote: string | null;
+  reviewedAt: Date | null;
+  requestedDocuments: string[];
+  vendorId: string | null;
+}
+
+export const REVIEW_ACTIONS = [
+  "START_REVIEW",
+  "REQUEST_DOCUMENTS",
+  "DOCUMENTS_RECEIVED",
+  "ADD_NOTE",
+  "APPROVE",
+  "REJECT",
+] as const;
+export type ReviewAction = (typeof REVIEW_ACTIONS)[number];
+
+// One step in an application's history, kept in AUDIT_LOG.
+export interface ApplicationEvent {
+  id: string;
+  action: ReviewAction;
+  actorId: string | null;
+  actorName: string | null;
+  fromStatus: ApplicationStatus;
+  toStatus: ApplicationStatus;
+  note: string | null;
+  documents: string[];
+  createdAt: Date;
+}
+
+// A status change that is saved only if the application is still in fromStatus.
+export interface ApplicationChange {
+  applicationId: string;
+  action: ReviewAction;
+  fromStatus: ApplicationStatus;
+  toStatus: ApplicationStatus;
+  note: string | null;
+  requestedDocuments: string[];
+  actorId: string;
+  actorName: string;
+  now: Date;
+}
+
+export interface ApprovedVendorInput {
+  kycLevel: "FULL" | "LIGHT";
+  trustWeight: number;
+  probationEndsAt: Date;
+}
+
+export interface NewVendorCredentials {
+  vendorId: string;
+  keyPrefix: string;
+  apiKey: string;
+  signingSecret: string;
+}
+
+// Signals that help an admin spot repeat or fake applications.
+export interface ApplicationMatches {
+  otherApplicationsSameEmail: number;
+  otherApplicationsSameNetwork: number;
+  similarVendors: { id: string; displayName: string; status: VendorStatus }[];
+}
+
 export interface AdminOverview {
   applicationsWaiting: number;
   disputesForReview: number;
@@ -129,11 +194,37 @@ export interface VendorOverview {
   openDisputes: number;
 }
 
+// One row per vendor in the admin console (blueprint section 20.3).
+export interface VendorSummary {
+  id: string;
+  displayName: string;
+  status: VendorStatus;
+  trustWeight: number;
+  orders30Days: number;
+  userFaults30Days: number;
+  lookups30Days: number;
+  portalUsers: number;
+}
+
+// A vendor's own risk check, without the phone hash (blueprint section 20.2).
+export interface VendorLookupRow {
+  createdAt: Date;
+  orderValuePkr: number;
+  returnedTier: RiskTier;
+  returnedAction: RecommendedAction;
+  latencyMs: number;
+}
+
 export interface EtimaadStore {
   // Counts for the admin console overview (blueprint section 20.3).
   adminOverview(): Promise<AdminOverview>;
   // Counts for one vendor's portal overview (blueprint section 20.2).
   vendorOverview(vendorId: string, since30Days: Date, dayStart: Date): Promise<VendorOverview>;
+  // All vendors with their activity since a time, by name.
+  listVendorSummaries(since: Date): Promise<VendorSummary[]>;
+  // One vendor's own orders and risk checks, newest first.
+  listVendorOrders(vendorId: string, limit: number): Promise<OrderRecord[]>;
+  listVendorLookups(vendorId: string, limit: number): Promise<VendorLookupRow[]>;
 
   // Maps a Supabase Auth user to an ADMIN_USERS or VENDOR_USERS row (admin wins if both exist).
   findPortalUserByAuthId(authUserId: string): Promise<PortalUser | null>;
@@ -142,6 +233,16 @@ export interface EtimaadStore {
   // Counts applications since a time, by email or by IP hash (for spam limits).
   countApplicationsSince(filter: { contactEmail?: string; ipHash?: string }, since: Date): Promise<number>;
   listApplications(limit: number): Promise<VendorApplicationRecord[]>;
+  getApplication(id: string): Promise<ApplicationDetail | null>;
+  listApplicationHistory(id: string): Promise<ApplicationEvent[]>;
+  findApplicationMatches(application: VendorApplicationRecord): Promise<ApplicationMatches>;
+  // Saves the change and its audit row together. STALE means someone else changed it first.
+  reviewApplication(change: ApplicationChange): Promise<"SAVED" | "STALE">;
+  // Like reviewApplication, and also creates the vendor with its first API key.
+  approveApplication(
+    change: ApplicationChange,
+    vendor: ApprovedVendorInput,
+  ): Promise<{ status: "SAVED"; credentials: NewVendorCredentials } | { status: "STALE" }>;
 
   findApiKeyByPrefix(prefix: string): Promise<ApiKeyRecord | null>;
   resolveSigningSecret(ref: string): Promise<string | null>;

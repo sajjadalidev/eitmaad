@@ -117,6 +117,10 @@ export const vendorApplications = pgTable(
     status: applicationStatusEnum("status").notNull().default("NEW"),
     reviewerNote: text("reviewer_note"),
     reviewedAt: ts("reviewed_at"),
+    // Documents still asked from the applicant. The full history is in AUDIT_LOG.
+    requestedDocuments: text("requested_documents").array().notNull().default(sql`'{}'::text[]`),
+    // Set when the application is approved and the vendor is created.
+    vendorId: uuid("vendor_id").references(() => vendors.id),
     createdAt: createdAt(),
   },
   (t) => [

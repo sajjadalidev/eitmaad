@@ -1,9 +1,13 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 import { DataTable } from "@/components/data-table";
+import { APPLICATION_STATUS_LABEL } from "@/server/application-review";
 import { getRuntime } from "@/server/config";
-import type { VendorApplicationRecord } from "@/server/store";
+import type { VendorApplicationRecord, VendorSummary } from "@/server/store";
 
 export const dynamic = "force-dynamic";
+
+const DAY_MS = 86_400_000;
 
 export const metadata: Metadata = { title: "Vendors and KYC" };
 
@@ -40,12 +44,33 @@ async function loadApplications(): Promise<VendorApplicationRecord[] | null> {
   }
 }
 
+async function loadVendors(): Promise<VendorSummary[] | null> {
+  try {
+    return await getRuntime().store.listVendorSummaries(new Date(Date.now() - 30 * DAY_MS));
+  } catch {
+    return null;
+  }
+}
+
 export default async function AdminVendorsPage() {
-  const applications = await loadApplications();
+  const [applications, vendors] = await Promise.all([loadApplications(), loadVendors()]);
+  const vendorRows = (vendors ?? []).map((v) => [
+    <strong key="n">{v.displayName}</strong>,
+    <span key="s" className="badge">
+      {v.status.replaceAll("_", " ")}
+    </span>,
+    v.trustWeight.toFixed(2),
+    v.orders30Days,
+    v.userFaults30Days,
+    v.lookups30Days,
+    v.portalUsers,
+  ]);
   const rows = (applications ?? []).map((a) => [
     a.createdAt.toISOString().slice(0, 16).replace("T", " "),
     <span key="b">
-      <strong>{a.displayName}</strong>
+      <Link href={`/admin/applications/${a.id}`}>
+        <strong>{a.displayName}</strong>
+      </Link>
       <br />
       <span className="muted small">{a.legalName}</span>
     </span>,
@@ -57,17 +82,35 @@ export default async function AdminVendorsPage() {
       <span className="muted small">{a.contactEmail}</span>
     </span>,
     <span key="s" className="badge">
-      {a.status}
+      {APPLICATION_STATUS_LABEL[a.status]}
     </span>,
+    <Link key="r" className="btn" href={`/admin/applications/${a.id}`}>
+      {a.status === "APPROVED" || a.status === "REJECTED" ? "View" : "Review"}
+    </Link>,
   ]);
 
   return (
     <>
       <h1>Vendors and KYC</h1>
+      <h2>Vendors</h2>
+      {vendors === null && <p className="notice">Vendors could not be loaded. Check the database settings.</p>}
+      <DataTable
+        columns={[
+          "Store",
+          "Status",
+          "Trust weight",
+          "Orders (30 days)",
+          "Customer faults (30 days)",
+          "Risk checks (30 days)",
+          "Portal users",
+        ]}
+        rows={vendorRows}
+        emptyMessage="No vendors yet."
+      />
       <h2>Applications</h2>
       {applications === null && <p className="notice">Applications could not be loaded. Check the database settings.</p>}
       <DataTable
-        columns={["Applied (UTC)", "Business", "Category / type", "Platform", "Contact", "Status"]}
+        columns={["Applied (UTC)", "Business", "Category / type", "Platform", "Contact", "Status", ""]}
         rows={rows}
         emptyMessage="No applications yet."
       />

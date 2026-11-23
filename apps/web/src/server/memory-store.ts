@@ -1,18 +1,28 @@
 // In-memory store for local development and tests. Data lives only in this process.
 
 import { randomUUID } from "node:crypto";
-import type { TrustProfile, VendorCustomerScore } from "@etimaad/core";
+import { sha256Hex, type TrustProfile, type VendorCustomerScore } from "@etimaad/core";
+import { applicationAuditRow, toApplicationEvent, type AuditRowValues } from "./application-audit";
+import { API_SCOPES } from "./store";
 import type { PortalUser } from "./users";
+import { generateApiCredentials } from "./vendor-admin";
 import type {
   AdminOverview,
   ApiKeyRecord,
+  ApplicationChange,
+  ApplicationDetail,
+  ApplicationEvent,
+  ApplicationMatches,
+  ApprovedVendorInput,
   VendorOverview,
   EtimaadStore,
   LookupRecord,
   OrderEventRecord,
   OrderRecord,
   VendorApplicationRecord,
+  VendorLookupRow,
   VendorRecord,
+  VendorSummary,
 } from "./store";
 
 const orderKey = (vendorId: string, ref: string) => JSON.stringify([vendorId, ref]);
@@ -32,6 +42,11 @@ export class InMemoryStore implements EtimaadStore {
   readonly lookups: LookupRecord[] = [];
   readonly applications: VendorApplicationRecord[] = [];
   readonly portalUsers = new Map<string, PortalUser>();
+  readonly reviews = new Map<
+    string,
+    { reviewerNote: string | null; reviewedAt: Date | null; requestedDocuments: string[]; vendorId: string | null }
+  >();
+  readonly audit: (AuditRowValues & { id: string })[] = [];
 
   async adminOverview(): Promise<AdminOverview> {
     return {
@@ -49,6 +64,48 @@ export class InMemoryStore implements EtimaadStore {
       ordersMissingReason: own.filter((o) => o.reasonCode === "OTHER").length,
       openDisputes: 0,
     };
+  }
+
+  async listVendorSummaries(since: Date): Promise<VendorSummary[]> {
+    const orders = [...this.orders.values()].filter((o) => o.occurredAt >= since);
+    const users = [...this.portalUsers.values()];
+    return [...this.vendors.values()]
+      .map((v) => {
+        const own = orders.filter((o) => o.vendorId === v.id);
+        return {
+          id: v.id,
+          displayName: v.displayName,
+          status: v.status,
+          trustWeight: v.trustWeight,
+          orders30Days: own.length,
+          userFaults30Days: own.filter((o) => o.derivedFault === "USER").length,
+          lookups30Days: this.lookups.filter((l) => l.vendorId === v.id && l.createdAt >= since).length,
+          portalUsers: users.filter((u) => u.vendorId === v.id).length,
+        };
+      })
+      .sort((a, b) => a.displayName.localeCompare(b.displayName));
+  }
+
+  async listVendorOrders(vendorId: string, limit: number) {
+    return [...this.orders.values()]
+      .filter((o) => o.vendorId === vendorId)
+      .sort((a, b) => b.occurredAt.getTime() - a.occurredAt.getTime())
+      .slice(0, limit)
+      .map((o) => ({ ...o }));
+  }
+
+  async listVendorLookups(vendorId: string, limit: number): Promise<VendorLookupRow[]> {
+    return this.lookups
+      .filter((l) => l.vendorId === vendorId)
+      .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
+      .slice(0, limit)
+      .map((l) => ({
+        createdAt: l.createdAt,
+        orderValuePkr: l.orderValuePkr,
+        returnedTier: l.returnedTier,
+        returnedAction: l.returnedAction,
+        latencyMs: l.latencyMs,
+      }));
   }
 
   async findPortalUserByAuthId(authUserId: string) {
@@ -70,6 +127,85 @@ export class InMemoryStore implements EtimaadStore {
 
   async listApplications(limit: number) {
     return [...this.applications].sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime()).slice(0, limit);
+  }
+
+  async getApplication(id: string): Promise<ApplicationDetail | null> {
+    const a = this.applications.find((x) => x.id === id);
+    if (!a) return null;
+    const review = this.reviews.get(id);
+    return {
+      ...a,
+      reviewerNote: review?.reviewerNote ?? null,
+      reviewedAt: review?.reviewedAt ?? null,
+      requestedDocuments: [...(review?.requestedDocuments ?? [])],
+      vendorId: review?.vendorId ?? null,
+    };
+  }
+
+  async listApplicationHistory(id: string): Promise<ApplicationEvent[]> {
+    return this.audit
+      .filter((r) => r.entityId === id)
+      .map((r) => toApplicationEvent(r.id, r.action, r.actorId, r.before, r.after, r.createdAt));
+  }
+
+  async findApplicationMatches(a: VendorApplicationRecord): Promise<ApplicationMatches> {
+    const others = this.applications.filter((x) => x.id !== a.id);
+    const name = a.displayName.toLowerCase();
+    return {
+      otherApplicationsSameEmail: others.filter((x) => x.contactEmail === a.contactEmail).length,
+      otherApplicationsSameNetwork: a.ipHash ? others.filter((x) => x.ipHash === a.ipHash).length : 0,
+      similarVendors: [...this.vendors.values()]
+        .filter((v) => v.displayName.toLowerCase().includes(name))
+        .map((v) => ({ id: v.id, displayName: v.displayName, status: v.status })),
+    };
+  }
+
+  private applyChange(change: ApplicationChange, vendorId: string | null): boolean {
+    const a = this.applications.find((x) => x.id === change.applicationId);
+    if (!a || a.status !== change.fromStatus) return false;
+    a.status = change.toStatus;
+    const review = this.reviews.get(a.id) ?? { reviewerNote: null, reviewedAt: null, requestedDocuments: [], vendorId: null };
+    review.reviewedAt = change.now;
+    review.requestedDocuments = [...change.requestedDocuments];
+    if (change.note !== null) review.reviewerNote = change.note;
+    if (vendorId !== null) review.vendorId = vendorId;
+    this.reviews.set(a.id, review);
+    this.audit.push({ id: randomUUID(), ...applicationAuditRow(change, vendorId ?? undefined) });
+    return true;
+  }
+
+  async reviewApplication(change: ApplicationChange) {
+    return this.applyChange(change, null) ? ("SAVED" as const) : ("STALE" as const);
+  }
+
+  async approveApplication(change: ApplicationChange, vendor: ApprovedVendorInput) {
+    const a = this.applications.find((x) => x.id === change.applicationId);
+    if (!a || a.status !== change.fromStatus) return { status: "STALE" as const };
+    const vendorId = randomUUID();
+    const credentials = generateApiCredentials();
+    this.addVendor({
+      id: vendorId,
+      displayName: a.displayName,
+      status: "PROBATION",
+      trustWeight: vendor.trustWeight,
+      faultClaimBias: 1,
+      settings: {},
+    });
+    this.addApiKey(
+      {
+        id: randomUUID(),
+        vendorId,
+        keyPrefix: credentials.keyPrefix,
+        keyHash: sha256Hex(credentials.apiKey),
+        scopes: API_SCOPES,
+        signingSecretRef: `memory-${credentials.keyPrefix}`,
+        status: "ACTIVE",
+        expiresAt: null,
+      },
+      credentials.signingSecret,
+    );
+    this.applyChange(change, vendorId);
+    return { status: "SAVED" as const, credentials: { vendorId, ...credentials } };
   }
 
   addVendor(vendor: VendorRecord): void {

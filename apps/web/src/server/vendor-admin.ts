@@ -17,6 +17,22 @@ function randomString(alphabet: string, length: number): string {
   return out;
 }
 
+export interface ApiCredentials {
+  keyPrefix: string;
+  apiKey: string;
+  signingSecret: string;
+}
+
+// A new API key (etm_<prefix>_<secret>) and signing secret.
+export function generateApiCredentials(): ApiCredentials {
+  const keyPrefix = randomString(LOWER_DIGITS, 8);
+  return {
+    keyPrefix,
+    apiKey: `etm_${keyPrefix}_${randomString(ALPHANUMERIC, 32)}`,
+    signingSecret: randomBytes(32).toString("base64url"),
+  };
+}
+
 export interface NewVendorInput {
   legalName: string;
   displayName: string;
@@ -24,14 +40,15 @@ export interface NewVendorInput {
   status: VendorStatus;
   trustWeight: number;
   kycReference: string;
+  kycLevel?: "FULL" | "LIGHT";
+  kycVerifiedAt?: Date;
+  kycReviewerNote?: string | null;
+  probationEndsAt?: Date;
 }
 
-export interface CreatedVendor {
+export interface CreatedVendor extends ApiCredentials {
   vendorId: string;
   apiKeyId: string;
-  keyPrefix: string;
-  apiKey: string;
-  signingSecret: string;
 }
 
 export async function createVendorWithKey(
@@ -39,9 +56,7 @@ export async function createVendorWithKey(
   input: NewVendorInput,
   signingKey: string,
 ): Promise<CreatedVendor> {
-  const keyPrefix = randomString(LOWER_DIGITS, 8);
-  const apiKey = `etm_${keyPrefix}_${randomString(ALPHANUMERIC, 32)}`;
-  const signingSecret = randomBytes(32).toString("base64url");
+  const credentials = generateApiCredentials();
 
   return db.transaction(async (tx) => {
     const [vendor] = await tx
@@ -53,6 +68,10 @@ export async function createVendorWithKey(
         status: input.status,
         trustWeight: input.trustWeight,
         kycReference: input.kycReference,
+        kycLevel: input.kycLevel ?? null,
+        kycVerifiedAt: input.kycVerifiedAt ?? null,
+        kycReviewerNote: input.kycReviewerNote ?? null,
+        probationEndsAt: input.probationEndsAt ?? null,
         settings: {},
       })
       .returning({ id: vendors.id });
@@ -62,14 +81,14 @@ export async function createVendorWithKey(
       .insert(apiKeys)
       .values({
         vendorId: vendor.id,
-        keyPrefix,
-        keyHash: sha256Hex(apiKey),
+        keyPrefix: credentials.keyPrefix,
+        keyHash: sha256Hex(credentials.apiKey),
         scopes: [...API_SCOPES],
-        signingSecretRef: sealSecret(signingSecret, signingKey),
+        signingSecretRef: sealSecret(credentials.signingSecret, signingKey),
       })
       .returning({ id: apiKeys.id });
     if (!key) throw new Error("API key insert returned no row");
 
-    return { vendorId: vendor.id, apiKeyId: key.id, keyPrefix, apiKey, signingSecret };
+    return { vendorId: vendor.id, apiKeyId: key.id, ...credentials };
   });
 }

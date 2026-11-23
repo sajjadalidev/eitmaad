@@ -3,6 +3,7 @@
 import {
   adminUsers,
   apiKeys,
+  auditLog,
   customerIdentifiers,
   customers,
   customerTrustProfiles,
@@ -19,12 +20,19 @@ import {
 import { vendorCanUseApi } from "@etimaad/core";
 import type { PortalUser } from "./users";
 import type { ScoreBreakdown, TrustProfile, VendorCustomerScore } from "@etimaad/core";
-import { and, count, desc, eq, gte, inArray, sql } from "drizzle-orm";
+import { and, count, desc, eq, gte, ilike, inArray, ne, or, sql } from "drizzle-orm";
 import type { PgDatabase } from "drizzle-orm/pg-core";
+import { APPLICATION_ENTITY, applicationAuditRow, toApplicationEvent } from "./application-audit";
 import { openSecret } from "./secret-box";
+import { createVendorWithKey } from "./vendor-admin";
 import type {
   AdminOverview,
   ApiKeyRecord,
+  ApplicationChange,
+  ApplicationDetail,
+  ApplicationEvent,
+  ApplicationMatches,
+  ApprovedVendorInput,
   VendorOverview,
   ApiScope,
   EtimaadStore,
@@ -32,7 +40,9 @@ import type {
   OrderEventRecord,
   OrderRecord,
   VendorApplicationRecord,
+  VendorLookupRow,
   VendorRecord,
+  VendorSummary,
 } from "./store";
 
 // Any Drizzle Postgres database or transaction (postgres-js in production, PGlite in tests).
@@ -118,6 +128,21 @@ function eventValues(event: OrderEventRecord) {
   };
 }
 
+async function updateApplication(db: AnyPgDatabase, change: ApplicationChange, vendorId: string | null): Promise<boolean> {
+  const rows = await db
+    .update(vendorApplications)
+    .set({
+      status: change.toStatus,
+      requestedDocuments: change.requestedDocuments,
+      reviewedAt: change.now,
+      ...(change.note !== null ? { reviewerNote: change.note } : {}),
+      ...(vendorId !== null ? { vendorId } : {}),
+    })
+    .where(and(eq(vendorApplications.id, change.applicationId), eq(vendorApplications.status, change.fromStatus)))
+    .returning({ id: vendorApplications.id });
+  return rows.length > 0;
+}
+
 export class PostgresStore implements EtimaadStore {
   constructor(
     private readonly db: AnyPgDatabase,
@@ -169,6 +194,71 @@ export class PostgresStore implements EtimaadStore {
       ordersMissingReason: missing?.n ?? 0,
       openDisputes: open?.n ?? 0,
     };
+  }
+
+  async listVendorSummaries(since: Date): Promise<VendorSummary[]> {
+    const [vendorRows, orderRows, lookupRows, userRows] = await Promise.all([
+      this.db
+        .select({
+          id: vendors.id,
+          displayName: vendors.displayName,
+          status: vendors.status,
+          trustWeight: vendors.trustWeight,
+        })
+        .from(vendors)
+        .orderBy(vendors.displayName),
+      this.db
+        .select({
+          vendorId: orders.vendorId,
+          n: count(),
+          userFaults: sql<number>`count(*) filter (where ${orders.derivedFault} = 'USER')`.mapWith(Number),
+        })
+        .from(orders)
+        .where(gte(orders.occurredAt, since))
+        .groupBy(orders.vendorId),
+      this.db
+        .select({ vendorId: lookupAuditLog.vendorId, n: count() })
+        .from(lookupAuditLog)
+        .where(gte(lookupAuditLog.createdAt, since))
+        .groupBy(lookupAuditLog.vendorId),
+      this.db.select({ vendorId: vendorUsers.vendorId, n: count() }).from(vendorUsers).groupBy(vendorUsers.vendorId),
+    ]);
+    const ordersBy = new Map(orderRows.map((r) => [r.vendorId, r]));
+    const lookupsBy = new Map(lookupRows.map((r) => [r.vendorId, r.n]));
+    const usersBy = new Map(userRows.map((r) => [r.vendorId, r.n]));
+    return vendorRows.map((v) => ({
+      ...v,
+      orders30Days: ordersBy.get(v.id)?.n ?? 0,
+      userFaults30Days: ordersBy.get(v.id)?.userFaults ?? 0,
+      lookups30Days: lookupsBy.get(v.id) ?? 0,
+      portalUsers: usersBy.get(v.id) ?? 0,
+    }));
+  }
+
+  async listVendorOrders(vendorId: string, limit: number): Promise<OrderRecord[]> {
+    const rows = await this.db
+      .select()
+      .from(orders)
+      .where(eq(orders.vendorId, vendorId))
+      .orderBy(desc(orders.occurredAt))
+      .limit(limit);
+    return rows.map(toOrderRecord);
+  }
+
+  async listVendorLookups(vendorId: string, limit: number): Promise<VendorLookupRow[]> {
+    const rows = await this.db
+      .select({
+        createdAt: lookupAuditLog.createdAt,
+        orderValuePkr: lookupAuditLog.orderValuePkr,
+        returnedTier: lookupAuditLog.returnedTier,
+        returnedAction: lookupAuditLog.returnedAction,
+        latencyMs: lookupAuditLog.latencyMs,
+      })
+      .from(lookupAuditLog)
+      .where(eq(lookupAuditLog.vendorId, vendorId))
+      .orderBy(desc(lookupAuditLog.createdAt))
+      .limit(limit);
+    return rows.map((r) => ({ ...r, orderValuePkr: r.orderValuePkr ?? 0, latencyMs: r.latencyMs ?? 0 }));
   }
 
   async findPortalUserByAuthId(authUserId: string): Promise<PortalUser | null> {
@@ -253,6 +343,120 @@ export class PostgresStore implements EtimaadStore {
       status: r.status,
       createdAt: r.createdAt,
     }));
+  }
+
+  async getApplication(id: string): Promise<ApplicationDetail | null> {
+    const [r] = await this.db.select().from(vendorApplications).where(eq(vendorApplications.id, id)).limit(1);
+    if (!r) return null;
+    return {
+      id: r.id,
+      legalName: r.legalName,
+      displayName: r.displayName,
+      category: r.category,
+      businessType: r.businessType,
+      platform: r.platform,
+      storeUrl: r.storeUrl,
+      contactName: r.contactName,
+      contactEmail: r.contactEmail,
+      ipHash: r.ipHash,
+      status: r.status,
+      createdAt: r.createdAt,
+      reviewerNote: r.reviewerNote,
+      reviewedAt: r.reviewedAt,
+      requestedDocuments: r.requestedDocuments,
+      vendorId: r.vendorId,
+    };
+  }
+
+  async listApplicationHistory(id: string): Promise<ApplicationEvent[]> {
+    const rows = await this.db
+      .select()
+      .from(auditLog)
+      .where(and(eq(auditLog.entityType, APPLICATION_ENTITY), eq(auditLog.entityId, id)))
+      .orderBy(auditLog.createdAt);
+    return rows.map((r) => toApplicationEvent(r.id, r.action, r.actorId, r.before, r.after, r.createdAt));
+  }
+
+  async findApplicationMatches(a: VendorApplicationRecord): Promise<ApplicationMatches> {
+    const pattern = `%${a.displayName.replace(/[%_\\]/g, (c) => `\\${c}`)}%`;
+    const [[sameEmail], [sameNetwork], similar] = await Promise.all([
+      this.db
+        .select({ n: count() })
+        .from(vendorApplications)
+        .where(and(eq(vendorApplications.contactEmail, a.contactEmail), ne(vendorApplications.id, a.id))),
+      a.ipHash
+        ? this.db
+            .select({ n: count() })
+            .from(vendorApplications)
+            .where(and(eq(vendorApplications.ipHash, a.ipHash), ne(vendorApplications.id, a.id)))
+        : Promise.resolve([{ n: 0 }]),
+      this.db
+        .select({ id: vendors.id, displayName: vendors.displayName, status: vendors.status })
+        .from(vendors)
+        .where(
+          or(
+            ilike(vendors.displayName, pattern),
+            sql`lower(${vendors.legalName}) = lower(${a.legalName})`,
+          ),
+        )
+        .limit(10),
+    ]);
+    return {
+      otherApplicationsSameEmail: sameEmail?.n ?? 0,
+      otherApplicationsSameNetwork: sameNetwork?.n ?? 0,
+      similarVendors: similar,
+    };
+  }
+
+  async reviewApplication(change: ApplicationChange): Promise<"SAVED" | "STALE"> {
+    return this.db.transaction(async (tx) => {
+      const saved = await updateApplication(tx, change, null);
+      if (!saved) return "STALE" as const;
+      await tx.insert(auditLog).values(applicationAuditRow(change));
+      return "SAVED" as const;
+    });
+  }
+
+  async approveApplication(change: ApplicationChange, vendor: ApprovedVendorInput) {
+    const signingKey = this.options.signingKey;
+    if (!signingKey) throw new Error("SIGNING_SECRET_KEY is not set, so API keys cannot be created.");
+    return this.db.transaction(async (tx) => {
+      const [application] = await tx
+        .select()
+        .from(vendorApplications)
+        .where(and(eq(vendorApplications.id, change.applicationId), eq(vendorApplications.status, change.fromStatus)))
+        .for("update")
+        .limit(1);
+      if (!application) return { status: "STALE" as const };
+
+      const created = await createVendorWithKey(
+        tx as AnyPgDatabase,
+        {
+          legalName: application.legalName,
+          displayName: application.displayName,
+          category: application.category,
+          status: "PROBATION",
+          trustWeight: vendor.trustWeight,
+          kycReference: `APP-${application.id.slice(0, 8)}`,
+          kycLevel: vendor.kycLevel,
+          kycVerifiedAt: change.now,
+          kycReviewerNote: change.note,
+          probationEndsAt: vendor.probationEndsAt,
+        },
+        signingKey,
+      );
+      await updateApplication(tx, change, created.vendorId);
+      await tx.insert(auditLog).values(applicationAuditRow(change, created.vendorId));
+      return {
+        status: "SAVED" as const,
+        credentials: {
+          vendorId: created.vendorId,
+          keyPrefix: created.keyPrefix,
+          apiKey: created.apiKey,
+          signingSecret: created.signingSecret,
+        },
+      };
+    });
   }
 
   async findApiKeyByPrefix(prefix: string): Promise<ApiKeyRecord | null> {
