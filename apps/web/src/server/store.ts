@@ -107,8 +107,12 @@ export interface EtimaadStore {
   createCustomer(phoneHash: string, keyVersion: number, now: Date): Promise<string>;
   findOrder(vendorId: string, externalOrderRef: string): Promise<OrderRecord | null>;
   // Saves the event, its idempotency key and the new order state as one unit.
-  saveAcceptedEvent(event: OrderEventRecord, order: OrderRecord): Promise<void>;
+  // Returns DUPLICATE_KEY (and saves nothing) if another request saved the same key first.
+  saveAcceptedEvent(event: OrderEventRecord, order: OrderRecord): Promise<"SAVED" | "DUPLICATE_KEY">;
   saveRejectedEvent(event: OrderEventRecord): Promise<void>;
+
+  // Runs fn while holding a per-customer lock, so two score rebuilds never overlap (blueprint section 6.7).
+  withCustomerLock<T>(customerId: string, fn: (store: EtimaadStore) => Promise<T>): Promise<T>;
 
   listCustomerOrders(customerId: string): Promise<OrderRecord[]>;
   saveScores(customerId: string, profile: TrustProfile, vendorScores: ReadonlyMap<string, VendorCustomerScore>): Promise<void>;

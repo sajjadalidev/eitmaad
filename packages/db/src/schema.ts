@@ -133,7 +133,8 @@ export const apiKeys = pgTable(
     createdAt: createdAt(),
     revokedAt: ts("revoked_at"),
   },
-  (t) => [index("api_keys_prefix_idx").on(t.keyPrefix), index("api_keys_vendor_idx").on(t.vendorId)],
+  // The prefix finds the key in one lookup, so it must be unique.
+  (t) => [uniqueIndex("api_keys_prefix_uq").on(t.keyPrefix), index("api_keys_vendor_idx").on(t.vendorId)],
 );
 
 export const dataSharingAgreements = pgTable("data_sharing_agreements", {

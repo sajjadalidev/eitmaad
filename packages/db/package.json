@@ -11,7 +11,9 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "db:generate": "drizzle-kit generate"
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "node scripts/migrate.mjs",
+    "db:seed-reference": "tsx scripts/seed-reference.ts"
   },
   "dependencies": {
     "@etimaad/core": "workspace:*",
@@ -22,6 +24,7 @@
     "@electric-sql/pglite": "^0.5.17",
     "@types/node": "^26.6.6",
     "drizzle-kit": "^0.31.11",
+    "tsx": "^4.23.15",
     "typescript": "^7.0.2",
     "vitest": "^5.1.1"
   }

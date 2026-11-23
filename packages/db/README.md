@@ -9,15 +9,18 @@ Drizzle schema and SQL migrations. Design: blueprint section 8.1.
 | `src/enums.ts` | Postgres enums. Shared values come from `@etimaad/core`. |
 | `src/schema.ts` | All 21 tables |
 | `src/client.ts` | `createDb(url)` for the Supabase pooler (prepared statements off) |
-| `migrations/` | Generated SQL plus hand edits |
+| `src/seed-data.ts` | Rows for `reason_codes` and `score_model_versions`. Builds rows only. |
+| `migrations/` | Generated SQL plus hand-written parts |
+| `scripts/migrate.mjs` | Applies pending migrations. Needs `--yes`. |
 
-## Hand edits in `0000_init.sql`
+## Hand-written SQL
 
-- `order_events` and `lookup_audit_log` are `PARTITION BY RANGE` (monthly).
-- `ensure_monthly_partition(parent, month)` creates a month partition.
-- The migration creates partitions for the current month and the next 2.
+| Migration | What |
+|---|---|
+| `0000_init.sql` | `order_events` and `lookup_audit_log` are `PARTITION BY RANGE` (monthly); `ensure_monthly_partition()`; partitions for the current month and the next 2 |
+| `0003_lock_down_public_access.sql` | Row level security on every table, no grants for Supabase `anon` and `authenticated`, new partitions get row level security too |
 
-Drizzle does not know about partitioning. Keep these edits if the migration is regenerated.
+Drizzle does not know about partitioning or row level security. Keep these parts if a migration is regenerated.
 
 ## Commands
 
@@ -25,5 +28,22 @@ Drizzle does not know about partitioning. Keep these edits if the migration is r
 pnpm db:generate
 ```
 
-- `db:generate` only writes SQL files. It does not connect to a database.
-- There is no migrate or seed script on purpose. Applying migrations or writing data needs explicit approval.
+- Writes SQL files only. Does not connect to a database.
+
+```bash
+DATABASE_MIGRATION_URL=... pnpm db:migrate --yes
+```
+
+- **Changes a real database. Run only with explicit approval.**
+- Use the Supabase "Session pooler" string (port 5432).
+```bash
+DATABASE_MIGRATION_URL=... pnpm db:seed-reference --yes
+```
+
+- **Writes to a real database. Run only with explicit approval.**
+- Inserts the 16 reason codes and scoring model v1. Existing rows are never changed, so running it again is safe.
+
+## Status
+
+- Supabase (Mumbai): migrations 0000 to 0003 applied.
+- Reference data seeded: 16 reason codes, scoring model v1. All other tables are empty.

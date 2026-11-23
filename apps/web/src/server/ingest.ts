@@ -187,7 +187,12 @@ async function ingestOne(ctx: ServiceContext, vendor: VendorRecord, raw: unknown
     rejectCode: null,
   };
 
-  await store.saveAcceptedEvent(event, order);
+  // Another request may have saved the same event between our check and this save.
+  if ((await store.saveAcceptedEvent(event, order)) === "DUPLICATE_KEY") {
+    const winner = await store.findIdempotencyKey(key);
+    if (winner?.payloadHash === hash) return { result: { event_id: e.event_id, result: "DUPLICATE" } };
+    return reject("IDEMPOTENCY_CONFLICT");
+  }
 
   const result: EventResult = { event_id: e.event_id, result: "ACCEPTED" };
   if (droppedKeys.length > 0) result.warnings = [`METADATA_KEYS_DROPPED: ${droppedKeys.join(", ")}`];

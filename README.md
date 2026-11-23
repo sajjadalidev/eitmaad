@@ -28,8 +28,9 @@ pnpm build
 
 ## Local API
 
-Without `DATABASE_URL`, the API uses an in-memory dev store (not a database). It is seeded with 3 demo
-vendors from `apps/web/src/server/dev-credentials.json`. Data is lost when the server restarts.
+In development the API uses an in-memory dev store (not a database), even when `DATABASE_URL` is set.
+It is seeded with 3 demo vendors from `apps/web/src/server/dev-credentials.json`. Data is lost when the
+server restarts. Set `ETIMAAD_STORE=postgres` only when you mean to use the real database locally.
 
 ```bash
 pnpm dev
@@ -42,7 +43,9 @@ pnpm --filter @etimaad/web demo
 | `POST /v1/risk/check` | API key |
 | `GET /v1/health` | None |
 
-With `DATABASE_URL` set, the API answers `503` until the Postgres store is built.
+In production the API uses the Postgres store. It needs `DATABASE_URL`, `PHONE_PEPPER_V1` and
+`SIGNING_SECRET_KEY` (see `.env.example`), and answers `503` when they are missing. The database also needs
+the migrations and the reference data (reason codes, scoring model v1) before the API can save orders.
 
 ## Local login
 

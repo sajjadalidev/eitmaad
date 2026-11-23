@@ -78,9 +78,16 @@ export class InMemoryStore implements EtimaadStore {
   }
 
   async saveAcceptedEvent(event: OrderEventRecord, order: OrderRecord) {
+    if (this.idempotency.has(event.idempotencyKey)) return "DUPLICATE_KEY" as const;
     this.events.push(event);
     this.idempotency.set(event.idempotencyKey, { payloadHash: event.payloadHash, orderEventId: event.id });
     this.orders.set(orderKey(order.vendorId, order.externalOrderRef), { ...order });
+    return "SAVED" as const;
+  }
+
+  // Single process, single thread: no lock needed.
+  async withCustomerLock<T>(_customerId: string, fn: (store: EtimaadStore) => Promise<T>): Promise<T> {
+    return fn(this);
   }
 
   async saveRejectedEvent(event: OrderEventRecord) {

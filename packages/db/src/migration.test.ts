@@ -72,6 +72,7 @@ describe("migrations on in-memory Postgres", () => {
 
   it("partition helper is idempotent and refuses other tables", async () => {
     await db.query(`select ensure_monthly_partition('order_events', current_date)`);
+    // Runs before the RLS test adds a 2030 partition to lookup_audit_log.
     const { rows } = await db.query<{ count: number }>(
       `select count(*)::int as count from pg_inherits i
        join pg_class parent on parent.oid = i.inhparent where parent.relname = 'order_events'`,
@@ -93,6 +94,22 @@ describe("migrations on in-memory Postgres", () => {
       expect(row.indexdef).toMatch(/UNIQUE INDEX/);
       expect(row.indexdef).toMatch(/WHERE/);
     }
+  });
+
+  it("turns on row level security for every table and partition", async () => {
+    const { rows } = await db.query<{ relname: string }>(
+      `select c.relname from pg_class c
+       join pg_namespace n on n.oid = c.relnamespace
+       where n.nspname = 'public' and c.relkind in ('r', 'p') and not c.relrowsecurity`,
+    );
+    expect(rows).toEqual([]);
+
+    // A partition created later by the helper is covered too.
+    await db.query(`select ensure_monthly_partition('lookup_audit_log', date '2030-01-01')`);
+    const later = await db.query<{ relrowsecurity: boolean }>(
+      `select relrowsecurity from pg_class where relname = 'lookup_audit_log_2030_01'`,
+    );
+    expect(later.rows[0]?.relrowsecurity).toBe(true);
   });
 
   it("enforces one order per vendor reference", async () => {

@@ -32,6 +32,10 @@ function toScoringOrder(order: OrderRecord): ScoringOrder {
 }
 
 export async function recomputeCustomer(store: EtimaadStore, customerId: string, now: Date): Promise<TrustProfile> {
+  return store.withCustomerLock(customerId, (locked) => rebuild(locked, customerId, now));
+}
+
+async function rebuild(store: EtimaadStore, customerId: string, now: Date): Promise<TrustProfile> {
   const orders = (await store.listCustomerOrders(customerId)).map(toScoringOrder);
   const vendorIds = [...new Set(orders.map((o) => o.vendorId))];
   const vendorRecords = await store.getVendors(vendorIds);
