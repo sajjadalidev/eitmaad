@@ -11,6 +11,7 @@ import { drizzle } from "drizzle-orm/pglite";
 import { describe, expect, it } from "vitest";
 import { APPROVAL_CHECKS, reviewApplication } from "./application-review";
 import { authenticate } from "./auth";
+import { manageVendor } from "./vendor-management";
 import { ingestEvents } from "./ingest";
 import { InMemoryStore } from "./memory-store";
 import { PostgresStore } from "./postgres-store";
@@ -384,6 +385,79 @@ describe.each(HARNESSES)("%s", (_name, make) => {
       expect(matches.otherApplicationsSameEmail).toBe(1);
       expect(matches.otherApplicationsSameNetwork).toBe(1);
       expect(matches.similarVendors.map((v) => v.displayName)).toEqual(["Vendor a"]);
+    });
+  });
+
+  it("moves a vendor through restrict, lift, trust change and terminate", async () => {
+    await withHarness(make, async (store) => {
+      const admin = { id: "admin-1", name: "Admin", role: "ADMIN" };
+      const act = (input: Record<string, unknown>, who = admin) =>
+        manageVendor({ store, now: NOW }, who, { vendorId: VENDOR_ID.a, ...input });
+
+      expect(await store.getVendorProfile(VENDOR_ID.a)).toMatchObject({ status: "ACTIVE", trustWeight: 1, displayName: "Vendor a" });
+      expect(await act({ action: "RESTRICT" })).toMatchObject({ status: "ERROR" });
+      expect(await act({ action: "RESTRICT", note: "Too many refusals" })).toEqual({ status: "SAVED" });
+      expect(await store.getVendor(VENDOR_ID.a)).toMatchObject({ status: "RESTRICTED", trustWeight: 0.2 });
+
+      expect(await act({ action: "LIFT_RESTRICTION", targetStatus: "ACTIVE", trustWeight: "0.5", note: "Fixed" })).toMatchObject({
+        status: "ERROR",
+      });
+      expect(await act({ action: "LIFT_RESTRICTION", targetStatus: "ACTIVE", trustWeight: "0.8", note: "Fixed" })).toEqual({
+        status: "SAVED",
+      });
+      expect(await act({ action: "SET_TRUST_WEIGHT", trustWeight: "0.9" }, { ...admin, role: "SUPPORT" })).toMatchObject({
+        status: "ERROR",
+      });
+      expect(await act({ action: "SET_TRUST_WEIGHT", trustWeight: "0.9" })).toEqual({ status: "SAVED" });
+      expect(await act({ action: "ADD_NOTE", note: "Called the owner" }, { ...admin, role: "SUPPORT" })).toEqual({ status: "SAVED" });
+
+      expect(await act({ action: "TERMINATE", note: "Fake orders" })).toEqual({ status: "SAVED" });
+      expect((await store.getVendor(VENDOR_ID.a))?.status).toBe("TERMINATED");
+      expect((await store.listVendorApiKeys(VENDOR_ID.a)).every((k) => k.status === "REVOKED")).toBe(true);
+      expect(await act({ action: "SET_TRUST_WEIGHT", trustWeight: "0.8" })).toMatchObject({ status: "ERROR" });
+
+      const history = await store.listVendorHistory(VENDOR_ID.a);
+      expect(history.map((h) => h.action)).toEqual(["RESTRICT", "LIFT_RESTRICTION", "SET_TRUST_WEIGHT", "ADD_NOTE", "TERMINATE"]);
+      expect(history[0]).toMatchObject({ fromStatus: "ACTIVE", toStatus: "RESTRICTED", fromTrust: 1, toTrust: 0.2, actorName: "Admin" });
+      expect(history[2]).toMatchObject({ fromTrust: 0.8, toTrust: 0.9 });
+    });
+  });
+
+  it("revokes one API key so it stops working", async () => {
+    await withHarness(make, async (store) => {
+      const [key] = await store.listVendorApiKeys(VENDOR_ID.b);
+      expect(key).toMatchObject({ keyPrefix: "testbbbb", status: "ACTIVE" });
+      const admin = { id: "admin-1", name: "Admin", role: "ADMIN" };
+      const revoke = () => manageVendor({ store, now: NOW }, admin, { vendorId: VENDOR_ID.b, action: "REVOKE_KEY", keyId: key!.id });
+      expect(await revoke()).toEqual({ status: "SAVED" });
+      expect(await revoke()).toMatchObject({ status: "ERROR" });
+
+      const body = '{"events":[]}';
+      await expect(
+        authenticate({ headers: signedHeaders("b", body), rawBody: body, now: NOW, store, scope: "events:write", requireSignature: true }),
+      ).rejects.toMatchObject({ code: "INVALID_KEY" });
+      expect((await store.listVendorHistory(VENDOR_ID.b))[0]).toMatchObject({ action: "REVOKE_KEY", keyPrefix: "testbbbb" });
+    });
+  });
+
+  it("saves only one of two parallel vendor changes", async () => {
+    await withHarness(make, async (store) => {
+      const admin = { id: "admin-1", name: "Admin", role: "ADMIN" };
+      const set = (w: string) =>
+        manageVendor({ store, now: NOW }, admin, { vendorId: VENDOR_ID.c, action: "SET_TRUST_WEIGHT", trustWeight: w });
+      const results = await Promise.all([set("0.8"), set("0.9")]);
+      expect(results.filter((r) => r.status === "SAVED")).toHaveLength(1);
+      expect(await store.listVendorHistory(VENDOR_ID.c)).toHaveLength(1);
+    });
+  });
+
+  it("counts orders by fault for a vendor and the network", async () => {
+    await withHarness(make, async (store) => {
+      await report(store, "a", [event({ phone: "03001313131" }), refusal({ phone: "03001313131" })]);
+      await report(store, "b", [refusal({ phone: "03001414141", reason_code: "RIDER_ISSUE" })]);
+      const since = new Date(NOW.getTime() - 30 * 86_400_000);
+      expect(await store.countFaults(VENDOR_ID.a, since)).toMatchObject({ NONE: 1, USER: 1, LOGISTICS: 0 });
+      expect(await store.countFaults(null, since)).toMatchObject({ NONE: 1, USER: 1, LOGISTICS: 1 });
     });
   });
 

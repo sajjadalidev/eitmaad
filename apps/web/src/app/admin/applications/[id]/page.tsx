@@ -108,7 +108,9 @@ export default async function ApplicationPage({ params }: { params: Promise<{ id
             <strong>Applied:</strong> {when(application.createdAt)} UTC
           </p>
           {application.vendorId && (
-            <p className="badge badge-accent">Vendor created. It now appears in the vendors list.</p>
+            <p>
+              <Link href={`/admin/vendors/${application.vendorId}`}>Open the vendor profile</Link>
+            </p>
           )}
         </div>
 

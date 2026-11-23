@@ -181,6 +181,87 @@ export interface ApplicationMatches {
   similarVendors: { id: string; displayName: string; status: VendorStatus }[];
 }
 
+// ---------- Vendor profile in the admin console (blueprint section 20.3.2) ----------
+
+export interface VendorProfile {
+  id: string;
+  legalName: string;
+  displayName: string;
+  category: (typeof VENDOR_CATEGORIES)[number];
+  status: VendorStatus;
+  trustWeight: number;
+  faultClaimBias: number;
+  kycLevel: "FULL" | "LIGHT" | null;
+  kycReference: string | null;
+  kycVerifiedAt: Date | null;
+  kycReviewerNote: string | null;
+  probationEndsAt: Date | null;
+  createdAt: Date;
+  applicationId: string | null;
+}
+
+export interface VendorApiKeyRow {
+  id: string;
+  keyPrefix: string;
+  status: "ACTIVE" | "REVOKED";
+  createdAt: Date;
+  lastUsedAt: Date | null;
+  revokedAt: Date | null;
+}
+
+export interface VendorUserRow {
+  id: string;
+  name: string;
+  email: string;
+  role: string;
+  status: "ACTIVE" | "DISABLED";
+  linked: boolean;
+  lastLoginAt: Date | null;
+}
+
+// Orders by fault since a time, for one vendor or (vendorId null) the whole network.
+export type FaultCounts = Record<FaultClass, number>;
+
+export const VENDOR_ADMIN_ACTIONS = [
+  "MAKE_ACTIVE",
+  "RESTRICT",
+  "LIFT_RESTRICTION",
+  "TERMINATE",
+  "SET_TRUST_WEIGHT",
+  "REVOKE_KEY",
+  "ADD_NOTE",
+] as const;
+export type VendorAdminAction = (typeof VENDOR_ADMIN_ACTIONS)[number];
+
+export interface VendorEvent {
+  id: string;
+  action: VendorAdminAction;
+  actorName: string | null;
+  fromStatus: VendorStatus;
+  toStatus: VendorStatus;
+  fromTrust: number;
+  toTrust: number;
+  note: string | null;
+  keyPrefix: string | null;
+  createdAt: Date;
+}
+
+// Saved only if the vendor still has fromStatus and fromTrust (and, for REVOKE_KEY, the key is still active).
+export interface VendorChange {
+  vendorId: string;
+  action: VendorAdminAction;
+  fromStatus: VendorStatus;
+  toStatus: VendorStatus;
+  fromTrust: number;
+  toTrust: number;
+  note: string | null;
+  keyId: string | null;
+  keyPrefix: string | null;
+  actorId: string;
+  actorName: string;
+  now: Date;
+}
+
 export interface AdminOverview {
   applicationsWaiting: number;
   disputesForReview: number;
@@ -225,6 +306,14 @@ export interface EtimaadStore {
   // One vendor's own orders and risk checks, newest first.
   listVendorOrders(vendorId: string, limit: number): Promise<OrderRecord[]>;
   listVendorLookups(vendorId: string, limit: number): Promise<VendorLookupRow[]>;
+
+  getVendorProfile(vendorId: string): Promise<VendorProfile | null>;
+  listVendorApiKeys(vendorId: string): Promise<VendorApiKeyRow[]>;
+  listVendorUsers(vendorId: string): Promise<VendorUserRow[]>;
+  countFaults(vendorId: string | null, since: Date): Promise<FaultCounts>;
+  listVendorHistory(vendorId: string): Promise<VendorEvent[]>;
+  // Saves the change and its audit row together. TERMINATE also revokes every active key.
+  updateVendor(change: VendorChange): Promise<"SAVED" | "STALE">;
 
   // Maps a Supabase Auth user to an ADMIN_USERS or VENDOR_USERS row (admin wins if both exist).
   findPortalUserByAuthId(authUserId: string): Promise<PortalUser | null>;

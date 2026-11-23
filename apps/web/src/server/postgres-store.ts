@@ -17,7 +17,8 @@ import {
   vendorUsers,
   vendors,
 } from "@etimaad/db";
-import { vendorCanUseApi } from "@etimaad/core";
+import { FAULT_CLASSES, vendorCanUseApi } from "@etimaad/core";
+import { VENDOR_ENTITY, toVendorEvent, vendorAuditRow } from "./vendor-audit";
 import type { PortalUser } from "./users";
 import type { ScoreBreakdown, TrustProfile, VendorCustomerScore } from "@etimaad/core";
 import { and, count, desc, eq, gte, ilike, inArray, ne, or, sql } from "drizzle-orm";
@@ -33,6 +34,12 @@ import type {
   ApplicationEvent,
   ApplicationMatches,
   ApprovedVendorInput,
+  FaultCounts,
+  VendorApiKeyRow,
+  VendorChange,
+  VendorEvent,
+  VendorProfile,
+  VendorUserRow,
   VendorOverview,
   ApiScope,
   EtimaadStore,
@@ -127,6 +134,8 @@ function eventValues(event: OrderEventRecord) {
     rejectCode: event.rejectCode,
   };
 }
+
+class StaleChange extends Error {}
 
 async function updateApplication(db: AnyPgDatabase, change: ApplicationChange, vendorId: string | null): Promise<boolean> {
   const rows = await db
@@ -259,6 +268,133 @@ export class PostgresStore implements EtimaadStore {
       .orderBy(desc(lookupAuditLog.createdAt))
       .limit(limit);
     return rows.map((r) => ({ ...r, orderValuePkr: r.orderValuePkr ?? 0, latencyMs: r.latencyMs ?? 0 }));
+  }
+
+  async getVendorProfile(vendorId: string): Promise<VendorProfile | null> {
+    const [[v], [application]] = await Promise.all([
+      this.db.select().from(vendors).where(eq(vendors.id, vendorId)).limit(1),
+      this.db
+        .select({ id: vendorApplications.id })
+        .from(vendorApplications)
+        .where(eq(vendorApplications.vendorId, vendorId))
+        .limit(1),
+    ]);
+    if (!v) return null;
+    return {
+      id: v.id,
+      legalName: v.legalName,
+      displayName: v.displayName,
+      category: v.category,
+      status: v.status,
+      trustWeight: v.trustWeight,
+      faultClaimBias: v.faultClaimBias,
+      kycLevel: v.kycLevel,
+      kycReference: v.kycReference,
+      kycVerifiedAt: v.kycVerifiedAt,
+      kycReviewerNote: v.kycReviewerNote,
+      probationEndsAt: v.probationEndsAt,
+      createdAt: v.createdAt,
+      applicationId: application?.id ?? null,
+    };
+  }
+
+  async listVendorApiKeys(vendorId: string): Promise<VendorApiKeyRow[]> {
+    return this.db
+      .select({
+        id: apiKeys.id,
+        keyPrefix: apiKeys.keyPrefix,
+        status: apiKeys.status,
+        createdAt: apiKeys.createdAt,
+        lastUsedAt: apiKeys.lastUsedAt,
+        revokedAt: apiKeys.revokedAt,
+      })
+      .from(apiKeys)
+      .where(eq(apiKeys.vendorId, vendorId))
+      .orderBy(desc(apiKeys.createdAt));
+  }
+
+  async listVendorUsers(vendorId: string): Promise<VendorUserRow[]> {
+    const rows = await this.db
+      .select()
+      .from(vendorUsers)
+      .where(eq(vendorUsers.vendorId, vendorId))
+      .orderBy(vendorUsers.createdAt);
+    return rows.map((u) => ({
+      id: u.id,
+      name: u.name,
+      email: u.email,
+      role: u.role,
+      status: u.status,
+      linked: u.authUserId !== null,
+      lastLoginAt: u.lastLoginAt,
+    }));
+  }
+
+  async countFaults(vendorId: string | null, since: Date): Promise<FaultCounts> {
+    const conditions = [gte(orders.occurredAt, since)];
+    if (vendorId !== null) conditions.push(eq(orders.vendorId, vendorId));
+    const rows = await this.db
+      .select({ fault: orders.derivedFault, n: count() })
+      .from(orders)
+      .where(and(...conditions))
+      .groupBy(orders.derivedFault);
+    const out = Object.fromEntries(FAULT_CLASSES.map((f) => [f, 0])) as FaultCounts;
+    for (const r of rows) out[r.fault] = r.n;
+    return out;
+  }
+
+  async listVendorHistory(vendorId: string): Promise<VendorEvent[]> {
+    const rows = await this.db
+      .select()
+      .from(auditLog)
+      .where(and(eq(auditLog.entityType, VENDOR_ENTITY), eq(auditLog.entityId, vendorId)))
+      .orderBy(auditLog.createdAt);
+    return rows.map((r) => toVendorEvent(r.id, r.action, r.before, r.after, r.createdAt));
+  }
+
+  async updateVendor(change: VendorChange): Promise<"SAVED" | "STALE"> {
+    return this.db.transaction(async (tx) => {
+      const updated = await tx
+        .update(vendors)
+        .set({ status: change.toStatus, trustWeight: change.toTrust, updatedAt: change.now })
+        .where(
+          and(
+            eq(vendors.id, change.vendorId),
+            eq(vendors.status, change.fromStatus),
+            eq(vendors.trustWeight, change.fromTrust),
+          ),
+        )
+        .returning({ id: vendors.id });
+      if (updated.length === 0) return "STALE" as const;
+
+      const revoke = { status: "REVOKED" as const, revokedAt: change.now };
+      if (change.action === "REVOKE_KEY") {
+        const revoked = await tx
+          .update(apiKeys)
+          .set(revoke)
+          .where(
+            and(
+              eq(apiKeys.id, change.keyId ?? ""),
+              eq(apiKeys.vendorId, change.vendorId),
+              eq(apiKeys.status, "ACTIVE"),
+            ),
+          )
+          .returning({ id: apiKeys.id });
+        // Rolls back the vendor update too.
+        if (revoked.length === 0) throw new StaleChange();
+      } else if (change.action === "TERMINATE") {
+        await tx
+          .update(apiKeys)
+          .set(revoke)
+          .where(and(eq(apiKeys.vendorId, change.vendorId), eq(apiKeys.status, "ACTIVE")));
+      }
+
+      await tx.insert(auditLog).values(vendorAuditRow(change));
+      return "SAVED" as const;
+    }).catch((error: unknown) => {
+      if (error instanceof StaleChange) return "STALE" as const;
+      throw error;
+    });
   }
 
   async findPortalUserByAuthId(authUserId: string): Promise<PortalUser | null> {

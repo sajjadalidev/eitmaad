@@ -1,7 +1,8 @@
 // In-memory store for local development and tests. Data lives only in this process.
 
 import { randomUUID } from "node:crypto";
-import { sha256Hex, type TrustProfile, type VendorCustomerScore } from "@etimaad/core";
+import { FAULT_CLASSES, sha256Hex, type TrustProfile, type VendorCustomerScore } from "@etimaad/core";
+import { toVendorEvent, vendorAuditRow, type VendorAuditRow } from "./vendor-audit";
 import { applicationAuditRow, toApplicationEvent, type AuditRowValues } from "./application-audit";
 import { API_SCOPES } from "./store";
 import type { PortalUser } from "./users";
@@ -14,6 +15,12 @@ import type {
   ApplicationEvent,
   ApplicationMatches,
   ApprovedVendorInput,
+  FaultCounts,
+  VendorApiKeyRow,
+  VendorChange,
+  VendorEvent,
+  VendorProfile,
+  VendorUserRow,
   VendorOverview,
   EtimaadStore,
   LookupRecord,
@@ -47,6 +54,14 @@ export class InMemoryStore implements EtimaadStore {
     { reviewerNote: string | null; reviewedAt: Date | null; requestedDocuments: string[]; vendorId: string | null }
   >();
   readonly audit: (AuditRowValues & { id: string })[] = [];
+  readonly vendorAudit: (VendorAuditRow & { id: string })[] = [];
+  // Stands in for dates the dev vendors do not have.
+  readonly startedAt = new Date();
+  readonly keyTimes = new Map<string, { createdAt: Date; revokedAt: Date | null }>();
+  readonly vendorExtras = new Map<
+    string,
+    Partial<Pick<VendorProfile, "legalName" | "category" | "kycLevel" | "kycReference" | "kycVerifiedAt" | "kycReviewerNote" | "probationEndsAt" | "createdAt">>
+  >();
 
   async adminOverview(): Promise<AdminOverview> {
     return {
@@ -203,17 +218,103 @@ export class InMemoryStore implements EtimaadStore {
         expiresAt: null,
       },
       credentials.signingSecret,
+      change.now,
     );
+    this.vendorExtras.set(vendorId, {
+      legalName: a.legalName,
+      category: a.category,
+      kycLevel: vendor.kycLevel,
+      kycReference: `APP-${a.id.slice(0, 8)}`,
+      kycVerifiedAt: change.now,
+      kycReviewerNote: change.note,
+      probationEndsAt: vendor.probationEndsAt,
+      createdAt: change.now,
+    });
     this.applyChange(change, vendorId);
     return { status: "SAVED" as const, credentials: { vendorId, ...credentials } };
+  }
+
+  async getVendorProfile(vendorId: string): Promise<VendorProfile | null> {
+    const v = this.vendors.get(vendorId);
+    if (!v) return null;
+    const extra = this.vendorExtras.get(vendorId);
+    const application = [...this.reviews.entries()].find(([, r]) => r.vendorId === vendorId);
+    return {
+      id: v.id,
+      legalName: extra?.legalName ?? v.displayName,
+      displayName: v.displayName,
+      category: extra?.category ?? "ecommerce",
+      status: v.status,
+      trustWeight: v.trustWeight,
+      faultClaimBias: v.faultClaimBias,
+      kycLevel: extra?.kycLevel ?? null,
+      kycReference: extra?.kycReference ?? null,
+      kycVerifiedAt: extra?.kycVerifiedAt ?? null,
+      kycReviewerNote: extra?.kycReviewerNote ?? null,
+      probationEndsAt: extra?.probationEndsAt ?? null,
+      createdAt: extra?.createdAt ?? this.startedAt,
+      applicationId: application?.[0] ?? null,
+    };
+  }
+
+  async listVendorApiKeys(vendorId: string): Promise<VendorApiKeyRow[]> {
+    return [...this.apiKeys.values()]
+      .filter((k) => k.vendorId === vendorId)
+      .map((k) => ({
+        id: k.id,
+        keyPrefix: k.keyPrefix,
+        status: k.status,
+        createdAt: this.keyTimes.get(k.id)?.createdAt ?? new Date(0),
+        lastUsedAt: null,
+        revokedAt: this.keyTimes.get(k.id)?.revokedAt ?? null,
+      }))
+      .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+  }
+
+  async listVendorUsers(vendorId: string): Promise<VendorUserRow[]> {
+    return [...this.portalUsers.values()]
+      .filter((u) => u.vendorId === vendorId)
+      .map((u) => ({ id: u.id, name: u.name, email: u.email, role: u.role, status: u.status, linked: true, lastLoginAt: null }));
+  }
+
+  async countFaults(vendorId: string | null, since: Date): Promise<FaultCounts> {
+    const out = Object.fromEntries(FAULT_CLASSES.map((f) => [f, 0])) as FaultCounts;
+    for (const o of this.orders.values()) {
+      if (o.occurredAt >= since && (vendorId === null || o.vendorId === vendorId)) out[o.derivedFault]++;
+    }
+    return out;
+  }
+
+  async listVendorHistory(vendorId: string): Promise<VendorEvent[]> {
+    return this.vendorAudit
+      .filter((r) => r.entityId === vendorId)
+      .map((r) => toVendorEvent(r.id, r.action, r.before, r.after, r.createdAt));
+  }
+
+  async updateVendor(change: VendorChange): Promise<"SAVED" | "STALE"> {
+    const v = this.vendors.get(change.vendorId);
+    if (!v || v.status !== change.fromStatus || v.trustWeight !== change.fromTrust) return "STALE";
+    const keys = [...this.apiKeys.values()].filter((k) => k.vendorId === v.id && k.status === "ACTIVE");
+    const toRevoke =
+      change.action === "TERMINATE" ? keys : change.action === "REVOKE_KEY" ? keys.filter((k) => k.id === change.keyId) : [];
+    if (change.action === "REVOKE_KEY" && toRevoke.length === 0) return "STALE";
+
+    for (const k of toRevoke) {
+      this.apiKeys.set(k.keyPrefix, { ...k, status: "REVOKED" });
+      this.keyTimes.set(k.id, { createdAt: this.keyTimes.get(k.id)?.createdAt ?? new Date(0), revokedAt: change.now });
+    }
+    this.vendors.set(v.id, { ...v, status: change.toStatus, trustWeight: change.toTrust });
+    this.vendorAudit.push({ id: randomUUID(), ...vendorAuditRow(change) });
+    return "SAVED";
   }
 
   addVendor(vendor: VendorRecord): void {
     this.vendors.set(vendor.id, vendor);
   }
 
-  addApiKey(key: ApiKeyRecord, signingSecret: string): void {
+  addApiKey(key: ApiKeyRecord, signingSecret: string, createdAt: Date = new Date()): void {
     this.apiKeys.set(key.keyPrefix, key);
+    this.keyTimes.set(key.id, { createdAt, revokedAt: null });
     this.signingSecrets.set(key.signingSecretRef, signingSecret);
   }
 

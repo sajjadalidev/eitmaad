@@ -1,6 +1,6 @@
 # Etimaad: System Blueprint v2: Cross-Vendor Customer Trust & Fulfillment Scoring Engine (MVP)
 
-> **Status:** v2.10, 2026-11-23. It replaces the Gemini v1 blueprint and includes the v2 review fixes, the tech stack, the WooCommerce/Shopify connectors and the web surfaces (changelog in §21).
+> **Status:** v2.11, 2026-11-23. It replaces the Gemini v1 blueprint and includes the v2 review fixes, the tech stack, the WooCommerce/Shopify connectors and the web surfaces (changelog in §21).
 > **Market:** Pakistan (PKR, phone region +92).
 > **Stack:** Next.js + TypeScript on Vercel (later), Supabase Postgres, Upstash Redis + QStash (§18).
 > **Integrations:** REST API, WooCommerce plugin, Shopify app (§19).
@@ -1048,6 +1048,25 @@ All three live in the same Next.js app (`apps/web`) and the same deployment.
 - Every step is saved with an `AUDIT_LOG` row in one transaction. If two admins act at once, only the first change is saved.
 - Documents are sent by email for now. Upload in the portal and email notices come later.
 
+#### 20.3.2 Vendor profile (`/admin/vendors/[id]`)
+
+Shows numbers (orders, risk checks, quota, disputes), profile and KYC, data quality checks, API keys, portal users, recent orders, recent risk checks and history.
+
+| Action | From status | Result | Who |
+|---|---|---|---|
+| Make active | PROBATION | ACTIVE, trust 0.7 to the KYC cap | ADMIN |
+| Change trust weight | PROBATION, ACTIVE | New weight within the status range | ADMIN |
+| Restrict (reason required) | PROBATION, ACTIVE | RESTRICTED, trust 0.2, quota 200 | ADMIN |
+| Lift restriction (reason required) | RESTRICTED | PROBATION or ACTIVE with a new weight | ADMIN |
+| Revoke an API key | any but TERMINATED | That key stops working at once | ADMIN |
+| Terminate (reason required) | any but TERMINATED | TERMINATED, every key revoked, users cannot log in | ADMIN |
+| Add a note | any | No change | ADMIN, SUPPORT |
+
+- KYC cap: 1.0 for full KYC, 0.7 for light KYC.
+- **Data quality checks:** customer-blame share of failed orders against the network (last 90 days, flagged when 15 points higher with 5+ failures), risk checks per reported order (flagged above 5), orders with reason OTHER, active keys and users.
+- Trust weight changes reach customer scores as each score is rebuilt (on the next order or within 7 days).
+- Every action is saved with an `AUDIT_LOG` row. If two admins act at once, only the first change is saved.
+
 ### 20.4 Rules
 - **Login must be enforced before any deployment.** Until then the portal and console are local previews with no data.
 
@@ -1184,3 +1203,11 @@ All three live in the same Next.js app (`apps/web`) and the same deployment.
 | 2 | Migration 0005: `DOCUMENTS_REQUESTED` status, `requested_documents` and `vendor_id` on applications | §8.1 |
 | 3 | Admin vendors list with 30-day activity per vendor | §20.3 |
 | 4 | Vendor portal shows its own orders (with whose fault) and recent risk checks | §20.2 |
+
+### v2.10 → v2.11 (vendor profile)
+
+| # | Change | Where |
+|---|---|---|
+| 1 | Admin vendor profile page with data quality checks | §20.3.2 |
+| 2 | Admin actions: make active, trust weight, restrict, lift, revoke key, terminate, notes | §20.3.2 |
+| 3 | No database change | |

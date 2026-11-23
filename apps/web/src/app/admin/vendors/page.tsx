@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { DataTable } from "@/components/data-table";
 import { APPLICATION_STATUS_LABEL } from "@/server/application-review";
+import { VENDOR_STATUS_LABEL } from "@/server/vendor-management";
 import { getRuntime } from "@/server/config";
 import type { VendorApplicationRecord, VendorSummary } from "@/server/store";
 
@@ -55,9 +56,11 @@ async function loadVendors(): Promise<VendorSummary[] | null> {
 export default async function AdminVendorsPage() {
   const [applications, vendors] = await Promise.all([loadApplications(), loadVendors()]);
   const vendorRows = (vendors ?? []).map((v) => [
-    <strong key="n">{v.displayName}</strong>,
+    <Link key="n" href={`/admin/vendors/${v.id}`}>
+      <strong>{v.displayName}</strong>
+    </Link>,
     <span key="s" className="badge">
-      {v.status.replaceAll("_", " ")}
+      {VENDOR_STATUS_LABEL[v.status]}
     </span>,
     v.trustWeight.toFixed(2),
     v.orders30Days,
